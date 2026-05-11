@@ -13,6 +13,13 @@ export const metadata: Metadata = {
   title: { default: 'סיכומית', template: '%s | סיכומית' },
   description: 'מרחב כתיבה אישי ליצירה, שמירה, ארגון וחיפוש של פתקים וסיכומים בעברית.',
   metadataBase: new URL(process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'),
+  manifest: '/sikumit/manifest.webmanifest',
+  applicationName: 'סיכומית',
+  appleWebApp: {
+    capable: true,
+    title: 'סיכומית',
+    statusBarStyle: 'default',
+  },
   openGraph: {
     type: 'website',
     locale: 'he_IL',

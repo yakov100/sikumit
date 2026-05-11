@@ -402,6 +402,7 @@ export function NotesWorkspace() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [saveState, setSaveState] = useState<'ready' | 'saving' | 'saved'>('ready')
   const [fileStatus, setFileStatus] = useState('')
+  const [offlineStatus, setOfflineStatus] = useState('מכין מצב אופליין...')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -429,6 +430,29 @@ export function NotesWorkspace() {
 
     return () => window.clearTimeout(timeout)
   }, [notes])
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) {
+      window.setTimeout(() => setOfflineStatus('מצב אופליין לא נתמך בדפדפן הזה'), 0)
+      return
+    }
+
+    const registerOfflineMode = async () => {
+      try {
+        const registration = await navigator.serviceWorker.register('/sikumit/sw.js', {
+          scope: '/sikumit/',
+          updateViaCache: 'none',
+        })
+        await navigator.serviceWorker.ready
+        registration.update().catch(() => undefined)
+        setOfflineStatus('זמין אופליין אחרי ביקור ראשון')
+      } catch {
+        setOfflineStatus('לא הצלחתי להכין מצב אופליין')
+      }
+    }
+
+    void registerOfflineMode()
+  }, [])
 
   const activeNote = notes.find((note) => note.id === activeId) ?? notes[0]
   const folders = useMemo(() => uniqueValues(notes, 'folder'), [notes])
@@ -741,6 +765,9 @@ export function NotesWorkspace() {
             <div className="flex items-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-sm font-bold text-[#53625c]">
               <Save className="h-4 w-4 text-[#317d6e]" />
               {saveState === 'saving' ? 'שומר...' : 'נשמר'}
+            </div>
+            <div className="hidden items-center rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-xs font-bold text-[#53625c] md:flex">
+              {offlineStatus}
             </div>
           </header>
 
