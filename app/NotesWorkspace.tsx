@@ -1,0 +1,959 @@
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Archive,
+  Bold,
+  CalendarDays,
+  CheckSquare,
+  Clock3,
+  Download,
+  FileText,
+  Folder,
+  Hash,
+  Heading2,
+  Heart,
+  List,
+  Menu,
+  MoreHorizontal,
+  PenLine,
+  Plus,
+  Save,
+  Search,
+  Star,
+  Tag,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react'
+
+type Note = {
+  id: string
+  title: string
+  body: string
+  tags: string[]
+  folder: string
+  favorite: boolean
+  archived: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+type Filter = 'all' | 'recent' | 'favorites' | 'archive'
+
+const storageKey = 'quiet-notes-workspace'
+const textEncoder = new TextEncoder()
+const textDecoder = new TextDecoder()
+
+const initialNotes: Note[] = [
+  {
+    id: 'n-1',
+    title: 'סיכום שיעור: ארכיטקטורת מערכות',
+    body:
+      'שכבת הממשק אחראית על חוויה מהירה וברורה. שכבת השירות מרכזת לוגיקה עסקית, ושכבת הנתונים שומרת עקביות. נקודות פתוחות: לבדוק caching, הרשאות, וגבולות API.',
+    tags: ['לימודים', 'מערכות'],
+    folder: 'לימודים',
+    favorite: true,
+    archived: false,
+    createdAt: '2026-05-08T09:30:00.000Z',
+    updatedAt: '2026-05-11T08:45:00.000Z',
+  },
+  {
+    id: 'n-2',
+    title: 'רעיונות לפגישה עם הצוות',
+    body:
+      'להתחיל בסקירת סטטוס קצרה, לעבור לחסמים, ואז להחליט מי לוקח כל פעולה. לשמור מקום לשאלות ולסיים בהחלטות ברורות.',
+    tags: ['עבודה', 'פגישות'],
+    folder: 'עבודה',
+    favorite: false,
+    archived: false,
+    createdAt: '2026-05-09T13:15:00.000Z',
+    updatedAt: '2026-05-10T16:20:00.000Z',
+  },
+  {
+    id: 'n-3',
+    title: 'טיוטת סיכום קריאה',
+    body:
+      'המאמר מדגיש שכתיבה טובה מתחילה בשאלה טובה. כדאי לסמן טענות מרכזיות, דוגמאות, ונקודות שלא הסכמתי איתן.',
+    tags: ['קריאה', 'סיכומים'],
+    folder: 'אישי',
+    favorite: false,
+    archived: false,
+    createdAt: '2026-05-07T18:00:00.000Z',
+    updatedAt: '2026-05-09T19:10:00.000Z',
+  },
+]
+
+const filters: { id: Filter; label: string; icon: typeof FileText }[] = [
+  { id: 'all', label: 'כל הפתקים', icon: FileText },
+  { id: 'recent', label: 'אחרונים', icon: Clock3 },
+  { id: 'favorites', label: 'מועדפים', icon: Star },
+  { id: 'archive', label: 'ארכיון', icon: Archive },
+]
+
+function formatRelativeDate(value: string) {
+  const date = new Date(value)
+  const diff = Date.now() - date.getTime()
+  const minutes = Math.max(1, Math.round(diff / 60000))
+
+  if (minutes < 60) return `עודכן לפני ${minutes} דק׳`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `עודכן לפני ${hours} שעות`
+  const days = Math.round(hours / 24)
+  if (days === 1) return 'עודכן אתמול'
+  if (days < 7) return `עודכן לפני ${days} ימים`
+
+  return new Intl.DateTimeFormat('he-IL', { day: 'numeric', month: 'short' }).format(date)
+}
+
+function uniqueValues(notes: Note[], key: 'folder' | 'tags') {
+  if (key === 'folder') return Array.from(new Set(notes.map((note) => note.folder))).sort()
+  return Array.from(new Set(notes.flatMap((note) => note.tags))).sort()
+}
+
+function highlightText(text: string, query: string) {
+  if (!query.trim()) return text
+
+  const normalizedQuery = query.trim()
+  const index = text.toLowerCase().indexOf(normalizedQuery.toLowerCase())
+  if (index === -1) return text
+
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark className="rounded bg-[#dbeafe] px-0.5 text-[#0f172a]">{text.slice(index, index + normalizedQuery.length)}</mark>
+      {text.slice(index + normalizedQuery.length)}
+    </>
+  )
+}
+
+function parseTagInput(value: string) {
+  return value
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+}
+
+function escapeXml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&apos;')
+}
+
+function sanitizeFileName(value: string) {
+  return (value || 'note').replace(/[\\/:*?"<>|]/g, '-').trim() || 'note'
+}
+
+const crcTable = Array.from({ length: 256 }, (_, index) => {
+  let crc = index
+  for (let bit = 0; bit < 8; bit += 1) {
+    crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1
+  }
+  return crc >>> 0
+})
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff
+  for (const byte of bytes) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8)
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+function writeUint16(target: Uint8Array, offset: number, value: number) {
+  target[offset] = value & 0xff
+  target[offset + 1] = (value >>> 8) & 0xff
+}
+
+function writeUint32(target: Uint8Array, offset: number, value: number) {
+  target[offset] = value & 0xff
+  target[offset + 1] = (value >>> 8) & 0xff
+  target[offset + 2] = (value >>> 16) & 0xff
+  target[offset + 3] = (value >>> 24) & 0xff
+}
+
+function concatBytes(parts: Uint8Array[]) {
+  const total = parts.reduce((sum, part) => sum + part.length, 0)
+  const output = new Uint8Array(total)
+  let offset = 0
+  for (const part of parts) {
+    output.set(part, offset)
+    offset += part.length
+  }
+  return output
+}
+
+function toArrayBuffer(bytes: Uint8Array) {
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+}
+
+function createZip(entries: { name: string; content: string }[]) {
+  const localParts: Uint8Array[] = []
+  const centralParts: Uint8Array[] = []
+  let offset = 0
+
+  for (const entry of entries) {
+    const name = textEncoder.encode(entry.name)
+    const content = textEncoder.encode(entry.content)
+    const crc = crc32(content)
+    const local = new Uint8Array(30 + name.length + content.length)
+
+    writeUint32(local, 0, 0x04034b50)
+    writeUint16(local, 4, 20)
+    writeUint16(local, 6, 0x0800)
+    writeUint16(local, 8, 0)
+    writeUint16(local, 10, 0)
+    writeUint16(local, 12, 0)
+    writeUint32(local, 14, crc)
+    writeUint32(local, 18, content.length)
+    writeUint32(local, 22, content.length)
+    writeUint16(local, 26, name.length)
+    writeUint16(local, 28, 0)
+    local.set(name, 30)
+    local.set(content, 30 + name.length)
+    localParts.push(local)
+
+    const central = new Uint8Array(46 + name.length)
+    writeUint32(central, 0, 0x02014b50)
+    writeUint16(central, 4, 20)
+    writeUint16(central, 6, 20)
+    writeUint16(central, 8, 0x0800)
+    writeUint16(central, 10, 0)
+    writeUint16(central, 12, 0)
+    writeUint16(central, 14, 0)
+    writeUint32(central, 16, crc)
+    writeUint32(central, 20, content.length)
+    writeUint32(central, 24, content.length)
+    writeUint16(central, 28, name.length)
+    writeUint16(central, 30, 0)
+    writeUint16(central, 32, 0)
+    writeUint16(central, 34, 0)
+    writeUint16(central, 36, 0)
+    writeUint32(central, 38, 0)
+    writeUint32(central, 42, offset)
+    central.set(name, 46)
+    centralParts.push(central)
+
+    offset += local.length
+  }
+
+  const centralDirectory = concatBytes(centralParts)
+  const end = new Uint8Array(22)
+  writeUint32(end, 0, 0x06054b50)
+  writeUint16(end, 8, entries.length)
+  writeUint16(end, 10, entries.length)
+  writeUint32(end, 12, centralDirectory.length)
+  writeUint32(end, 16, offset)
+
+  return concatBytes([...localParts, centralDirectory, end])
+}
+
+function createDocumentXml(note: Note) {
+  const lines = note.body.split(/\r?\n/)
+  const paragraphs = lines
+    .map((line) => {
+      const text = escapeXml(line)
+      return `<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`
+    })
+    .join('')
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:xml="http://www.w3.org/XML/1998/namespace">
+  <w:body>
+    <w:p><w:pPr><w:bidi/><w:pStyle w:val="Title"/></w:pPr><w:r><w:t xml:space="preserve">${escapeXml(note.title)}</w:t></w:r></w:p>
+    ${paragraphs}
+    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+  </w:body>
+</w:document>`
+}
+
+function createDocxBlob(note: Note) {
+  const now = new Date().toISOString()
+  const entries = [
+    {
+      name: '[Content_Types].xml',
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
+</Types>`,
+    },
+    {
+      name: '_rels/.rels',
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`,
+    },
+    {
+      name: 'docProps/core.xml',
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>${escapeXml(note.title)}</dc:title>
+  <dc:creator>סיכומית</dc:creator>
+  <cp:lastModifiedBy>סיכומית</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">${now}</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">${now}</dcterms:modified>
+</cp:coreProperties>`,
+    },
+    {
+      name: 'docProps/app.xml',
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"><Application>סיכומית</Application></Properties>`,
+    },
+    {
+      name: 'word/document.xml',
+      content: createDocumentXml(note),
+    },
+  ]
+
+  return new Blob([toArrayBuffer(createZip(entries))], {
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  })
+}
+
+function getUint16(view: DataView, offset: number) {
+  return view.getUint16(offset, true)
+}
+
+function getUint32(view: DataView, offset: number) {
+  return view.getUint32(offset, true)
+}
+
+async function inflateRaw(bytes: Uint8Array) {
+  const stream = new Blob([toArrayBuffer(bytes)]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+async function readZipEntry(buffer: ArrayBuffer, targetName: string) {
+  const bytes = new Uint8Array(buffer)
+  const view = new DataView(buffer)
+  let endOffset = -1
+
+  for (let index = bytes.length - 22; index >= Math.max(0, bytes.length - 66000); index -= 1) {
+    if (getUint32(view, index) === 0x06054b50) {
+      endOffset = index
+      break
+    }
+  }
+
+  if (endOffset === -1) throw new Error('לא נמצא מבנה DOCX תקין')
+
+  const entryCount = getUint16(view, endOffset + 10)
+  const centralOffset = getUint32(view, endOffset + 16)
+  let cursor = centralOffset
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (getUint32(view, cursor) !== 0x02014b50) throw new Error('קובץ DOCX לא תקין')
+
+    const method = getUint16(view, cursor + 10)
+    const compressedSize = getUint32(view, cursor + 20)
+    const fileNameLength = getUint16(view, cursor + 28)
+    const extraLength = getUint16(view, cursor + 30)
+    const commentLength = getUint16(view, cursor + 32)
+    const localOffset = getUint32(view, cursor + 42)
+    const name = textDecoder.decode(bytes.slice(cursor + 46, cursor + 46 + fileNameLength))
+
+    if (name === targetName) {
+      const localNameLength = getUint16(view, localOffset + 26)
+      const localExtraLength = getUint16(view, localOffset + 28)
+      const dataOffset = localOffset + 30 + localNameLength + localExtraLength
+      const compressed = bytes.slice(dataOffset, dataOffset + compressedSize)
+
+      if (method === 0) return textDecoder.decode(compressed)
+      if (method === 8) return textDecoder.decode(await inflateRaw(compressed))
+      throw new Error('סוג דחיסה לא נתמך בקובץ Word')
+    }
+
+    cursor += 46 + fileNameLength + extraLength + commentLength
+  }
+
+  throw new Error('לא נמצא תוכן Word בקובץ')
+}
+
+function extractTextFromDocumentXml(xmlText: string) {
+  const xml = new DOMParser().parseFromString(xmlText, 'application/xml')
+  const paragraphs = Array.from(xml.getElementsByTagNameNS('*', 'p'))
+
+  return paragraphs
+    .map((paragraph) =>
+      Array.from(paragraph.getElementsByTagNameNS('*', 't'))
+        .map((node) => node.textContent ?? '')
+        .join(''),
+    )
+    .filter((line) => line.trim().length > 0)
+}
+
+export function NotesWorkspace() {
+  const [notes, setNotes] = useState<Note[]>(initialNotes)
+  const [activeId, setActiveId] = useState(initialNotes[0].id)
+  const [query, setQuery] = useState('')
+  const [activeFilter, setActiveFilter] = useState<Filter>('all')
+  const [activeTag, setActiveTag] = useState<string | null>(null)
+  const [activeFolder, setActiveFolder] = useState<string | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [saveState, setSaveState] = useState<'ready' | 'saving' | 'saved'>('ready')
+  const [fileStatus, setFileStatus] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(storageKey)
+    if (!saved) return
+
+    try {
+      const parsed = JSON.parse(saved) as Note[]
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        window.setTimeout(() => {
+          setNotes(parsed)
+          setActiveId(parsed[0].id)
+        }, 0)
+      }
+    } catch {
+      window.localStorage.removeItem(storageKey)
+    }
+  }, [])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      window.localStorage.setItem(storageKey, JSON.stringify(notes))
+      setSaveState('saved')
+    }, 280)
+
+    return () => window.clearTimeout(timeout)
+  }, [notes])
+
+  const activeNote = notes.find((note) => note.id === activeId) ?? notes[0]
+  const folders = useMemo(() => uniqueValues(notes, 'folder'), [notes])
+  const tags = useMemo(() => uniqueValues(notes, 'tags'), [notes])
+
+  const filteredNotes = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+
+    return notes
+      .filter((note) => {
+        if (activeFilter === 'archive' && !note.archived) return false
+        if (activeFilter !== 'archive' && note.archived) return false
+        if (activeFilter === 'favorites' && !note.favorite) return false
+        if (activeTag && !note.tags.includes(activeTag)) return false
+        if (activeFolder && note.folder !== activeFolder) return false
+
+        if (!normalizedQuery) return true
+        const searchable = [note.title, note.body, note.folder, ...note.tags].join(' ').toLowerCase()
+        return searchable.includes(normalizedQuery)
+      })
+      .sort((a, b) => {
+        if (activeFilter === 'recent') return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      })
+  }, [activeFilter, activeFolder, activeTag, notes, query])
+
+  function updateNote(patch: Partial<Note>) {
+    if (!activeNote) return
+
+    setSaveState('saving')
+    setNotes((current) =>
+      current.map((note) =>
+        note.id === activeNote.id ? { ...note, ...patch, updatedAt: new Date().toISOString() } : note,
+      ),
+    )
+  }
+
+  function createNote() {
+    const now = new Date().toISOString()
+    const note: Note = {
+      id: `n-${crypto.randomUUID()}`,
+      title: query.trim() || 'פתק חדש',
+      body: '',
+      tags: activeTag ? [activeTag] : ['כללי'],
+      folder: activeFolder || 'כללי',
+      favorite: false,
+      archived: false,
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    setSaveState('saving')
+    setNotes((current) => [note, ...current])
+    setActiveId(note.id)
+    setActiveFilter('all')
+    setSidebarOpen(false)
+  }
+
+  function deleteNote(id: string) {
+    setSaveState('saving')
+    setNotes((current) => {
+      const next = current.filter((note) => note.id !== id)
+      if (activeId === id) setActiveId(next[0]?.id ?? '')
+      return next
+    })
+  }
+
+  async function importWordFile(file: File) {
+    setFileStatus('מייבא קובץ Word...')
+
+    try {
+      const xml = await readZipEntry(await file.arrayBuffer(), 'word/document.xml')
+      const paragraphs = extractTextFromDocumentXml(xml)
+      const [firstLine, ...rest] = paragraphs
+      const now = new Date().toISOString()
+      const title = firstLine?.trim() || file.name.replace(/\.docx$/i, '')
+      const body = rest.length > 0 ? rest.join('\n\n') : paragraphs.join('\n\n')
+      const note: Note = {
+        id: `n-${crypto.randomUUID()}`,
+        title,
+        body,
+        tags: ['Word'],
+        folder: 'מיובאים',
+        favorite: false,
+        archived: false,
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      setSaveState('saving')
+      setNotes((current) => [note, ...current])
+      setActiveId(note.id)
+      setActiveFilter('all')
+      setFileStatus('קובץ Word יובא לפתק חדש')
+    } catch (error) {
+      setFileStatus(error instanceof Error ? error.message : 'לא הצלחתי לייבא את הקובץ')
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  function exportActiveNote() {
+    if (!activeNote) return
+
+    const blob = createDocxBlob(activeNote)
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${sanitizeFileName(activeNote.title)}.docx`
+    document.body.append(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+    setFileStatus('הפתק יוצא לקובץ Word')
+  }
+
+  const wordCount = activeNote?.body.split(/\s+/).filter(Boolean).length ?? 0
+  const emptySearch = query.trim() && filteredNotes.length === 0
+
+  return (
+    <main className="min-h-screen bg-[#f7f7f2] text-[#17211b]">
+      <div className="flex min-h-screen">
+        <aside
+          className={`fixed inset-y-0 right-0 z-40 w-[292px] border-l border-[#deded4] bg-[#fbfbf6] transition-transform duration-200 lg:static lg:translate-x-0 ${
+            sidebarOpen ? 'translate-x-0' : 'translate-x-full'
+          }`}
+        >
+          <div className="flex h-full flex-col">
+            <div className="flex h-16 items-center justify-between border-b border-[#deded4] px-4">
+              <div className="flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-md bg-[#183c35] text-white">
+                  <PenLine className="h-5 w-5" />
+                </div>
+                <div>
+                  <p className="text-lg font-black leading-5">סיכומית</p>
+                  <p className="text-xs font-semibold text-[#69756f]">מרחב כתיבה אישי</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="grid h-9 w-9 place-items-center rounded-md text-[#58655f] hover:bg-[#ecece4] lg:hidden"
+                aria-label="סגירת תפריט"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-5 overflow-y-auto px-4 py-4">
+              <button
+                type="button"
+                onClick={createNote}
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-md bg-[#183c35] px-4 text-sm font-bold text-white shadow-sm transition hover:bg-[#225246]"
+              >
+                <Plus className="h-4 w-4" />
+                פתק חדש
+              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex h-10 items-center justify-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 text-sm font-bold text-[#44514c] transition hover:border-[#317d6e]"
+                >
+                  <Upload className="h-4 w-4" />
+                  ייבוא Word
+                </button>
+                <button
+                  type="button"
+                  onClick={exportActiveNote}
+                  disabled={!activeNote}
+                  className="flex h-10 items-center justify-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 text-sm font-bold text-[#44514c] transition hover:border-[#317d6e] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Download className="h-4 w-4" />
+                  ייצוא Word
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  if (file) void importWordFile(file)
+                }}
+              />
+              {fileStatus ? (
+                <p className="rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-xs font-bold leading-5 text-[#59665f]">
+                  {fileStatus}
+                </p>
+              ) : null}
+
+              <label className="relative block">
+                <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f7b75]" />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="חיפוש בכותרת, תוכן או תגית"
+                  className="h-11 w-full rounded-md border border-[#d8d8cf] bg-white pr-10 pl-3 text-sm font-medium outline-none transition placeholder:text-[#8c958f] focus:border-[#317d6e] focus:ring-2 focus:ring-[#317d6e]/15"
+                />
+              </label>
+
+              <nav className="space-y-1">
+                {filters.map((filter) => {
+                  const Icon = filter.icon
+                  const selected = activeFilter === filter.id
+
+                  return (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      onClick={() => {
+                        setActiveFilter(filter.id)
+                        setSidebarOpen(false)
+                      }}
+                      className={`flex h-10 w-full items-center justify-between rounded-md px-3 text-sm font-bold transition ${
+                        selected ? 'bg-[#e5efe9] text-[#183c35]' : 'text-[#51605a] hover:bg-[#eeeeE7]'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Icon className="h-4 w-4" />
+                        {filter.label}
+                      </span>
+                      <span className="text-xs text-[#7d8882]">
+                        {filter.id === 'archive'
+                          ? notes.filter((note) => note.archived).length
+                          : notes.filter((note) => !note.archived).length}
+                      </span>
+                    </button>
+                  )
+                })}
+              </nav>
+
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase text-[#7a837e]">
+                  <Folder className="h-3.5 w-3.5" />
+                  נושאים
+                </div>
+                <div className="space-y-1">
+                  {folders.map((folder) => (
+                    <button
+                      key={folder}
+                      type="button"
+                      onClick={() => setActiveFolder(activeFolder === folder ? null : folder)}
+                      className={`flex h-9 w-full items-center justify-between rounded-md px-3 text-sm font-semibold ${
+                        activeFolder === folder ? 'bg-[#f0e6cf] text-[#5c3f0f]' : 'text-[#53625c] hover:bg-[#eeeeE7]'
+                      }`}
+                    >
+                      {folder}
+                      <span className="text-xs">{notes.filter((note) => note.folder === folder).length}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase text-[#7a837e]">
+                  <Tag className="h-3.5 w-3.5" />
+                  תגיות
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {tags.map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                      className={`inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-xs font-bold transition ${
+                        activeTag === tag
+                          ? 'border-[#317d6e] bg-[#e5efe9] text-[#183c35]'
+                          : 'border-[#d8d8cf] bg-white text-[#56635d] hover:border-[#b9c2bc]'
+                      }`}
+                    >
+                      <Hash className="h-3 w-3" />
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        {sidebarOpen ? (
+          <button
+            type="button"
+            aria-label="סגירת תפריט"
+            className="fixed inset-0 z-30 bg-black/20 lg:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        ) : null}
+
+        <section className="flex min-w-0 flex-1 flex-col lg:grid lg:grid-cols-[360px_minmax(0,1fr)]">
+          <header className="flex h-16 items-center justify-between border-b border-[#deded4] bg-[#f7f7f2]/92 px-4 backdrop-blur lg:col-span-2 lg:px-6">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                className="grid h-10 w-10 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#44514c] lg:hidden"
+                aria-label="פתיחת תפריט"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <div>
+                <h1 className="text-lg font-black sm:text-xl">פתקים וסיכומים</h1>
+                <p className="hidden text-sm text-[#68756f] sm:block">כתיבה, ארגון וחיפוש במקום אחד</p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-sm font-bold text-[#53625c]">
+              <Save className="h-4 w-4 text-[#317d6e]" />
+              {saveState === 'saving' ? 'שומר...' : 'נשמר'}
+            </div>
+          </header>
+
+          <div className="min-h-0 border-l border-[#deded4] bg-[#f1f1ea] lg:h-[calc(100vh-4rem)]">
+            <div className="flex h-full flex-col">
+              <div className="flex items-center justify-between border-b border-[#deded4] px-4 py-3">
+                <div>
+                  <p className="text-sm font-black text-[#27352f]">{filteredNotes.length} פתקים</p>
+                  <p className="text-xs font-semibold text-[#738078]">
+                    {activeTag ? `תגית: ${activeTag}` : activeFolder ? `נושא: ${activeFolder}` : 'תצוגת עבודה'}
+                  </p>
+                </div>
+                {(activeTag || activeFolder || query) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTag(null)
+                      setActiveFolder(null)
+                      setQuery('')
+                    }}
+                    className="grid h-9 w-9 place-items-center rounded-md text-[#59665f] hover:bg-white"
+                    aria-label="ניקוי סינון"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-3">
+                {emptySearch ? (
+                  <div className="mt-10 px-5 text-center">
+                    <Search className="mx-auto mb-3 h-8 w-8 text-[#87918b]" />
+                    <p className="font-black">לא נמצאו תוצאות</p>
+                    <p className="mt-2 text-sm leading-6 text-[#68756f]">אפשר ליצור פתק חדש עם מילת החיפוש הנוכחית.</p>
+                    <button
+                      type="button"
+                      onClick={createNote}
+                      className="mt-4 inline-flex h-10 items-center gap-2 rounded-md bg-[#183c35] px-4 text-sm font-bold text-white"
+                    >
+                      <Plus className="h-4 w-4" />
+                      יצירת פתק
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredNotes.map((note) => {
+                      const selected = note.id === activeNote?.id
+                      const preview = note.body || 'אין תוכן עדיין'
+
+                      return (
+                        <button
+                          key={note.id}
+                          type="button"
+                          onClick={() => {
+                            setActiveId(note.id)
+                            setSidebarOpen(false)
+                          }}
+                          className={`w-full rounded-md border p-4 text-right transition ${
+                            selected
+                              ? 'border-[#317d6e] bg-white shadow-sm'
+                              : 'border-transparent bg-transparent hover:border-[#deded4] hover:bg-white/70'
+                          }`}
+                        >
+                          <div className="mb-2 flex items-start justify-between gap-3">
+                            <h2 className="line-clamp-2 text-base font-black leading-6 text-[#1d2a24]">
+                              {highlightText(note.title, query)}
+                            </h2>
+                            {note.favorite ? <Star className="mt-1 h-4 w-4 shrink-0 fill-[#c88a12] text-[#c88a12]" /> : null}
+                          </div>
+                          <p className="line-clamp-2 text-sm leading-6 text-[#5e6b65]">{highlightText(preview, query)}</p>
+                          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-bold text-[#7a857f]">
+                            <span className="inline-flex items-center gap-1">
+                              <CalendarDays className="h-3.5 w-3.5" />
+                              {formatRelativeDate(note.updatedAt)}
+                            </span>
+                            {note.tags.slice(0, 2).map((tag) => (
+                              <span key={tag} className="rounded bg-[#e7e7de] px-2 py-1">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <article className="min-h-0 bg-[#fcfcf8] lg:h-[calc(100vh-4rem)]">
+            {activeNote ? (
+              <div className="flex h-full flex-col">
+                <div className="border-b border-[#deded4] px-5 py-4 lg:px-8">
+                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {[Heading2, Bold, List, CheckSquare].map((Icon, index) => (
+                        <button
+                          key={index}
+                          type="button"
+                          className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#4e5b55] transition hover:border-[#317d6e] hover:text-[#183c35]"
+                          aria-label={['כותרת', 'מודגש', 'רשימה', 'צ׳קבוקס'][index]}
+                          title={['כותרת', 'מודגש', 'רשימה', 'צ׳קבוקס'][index]}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => updateNote({ favorite: !activeNote.favorite })}
+                        className={`grid h-9 w-9 place-items-center rounded-md border transition ${
+                          activeNote.favorite
+                            ? 'border-[#e2bd62] bg-[#fff4d6] text-[#9f690b]'
+                            : 'border-[#d8d8cf] bg-white text-[#59665f] hover:border-[#c7a44b]'
+                        }`}
+                        aria-label="סימון מועדף"
+                        title="מועדף"
+                      >
+                        <Heart className={`h-4 w-4 ${activeNote.favorite ? 'fill-current' : ''}`} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => updateNote({ archived: !activeNote.archived })}
+                        className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#59665f] transition hover:border-[#317d6e]"
+                        aria-label="ארכוב"
+                        title="ארכוב"
+                      >
+                        <Archive className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteNote(activeNote.id)}
+                        className="grid h-9 w-9 place-items-center rounded-md border border-[#e5c7c2] bg-white text-[#a34334] transition hover:bg-[#fff0ed]"
+                        aria-label="מחיקה"
+                        title="מחיקה"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#59665f]"
+                        aria-label="עוד"
+                        title="עוד"
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <input
+                    value={activeNote.title}
+                    onChange={(event) => updateNote({ title: event.target.value })}
+                    className="w-full bg-transparent text-3xl font-black leading-tight text-[#17211b] outline-none placeholder:text-[#a2aaa5] sm:text-4xl"
+                    placeholder="כותרת הפתק"
+                  />
+
+                  <div className="mt-4 grid gap-3 md:grid-cols-[1fr_1fr]">
+                    <label className="flex items-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-sm font-semibold text-[#53625c]">
+                      <Folder className="h-4 w-4 text-[#317d6e]" />
+                      <input
+                        value={activeNote.folder}
+                        onChange={(event) => updateNote({ folder: event.target.value || 'כללי' })}
+                        className="min-w-0 flex-1 bg-transparent outline-none"
+                        placeholder="נושא"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-sm font-semibold text-[#53625c]">
+                      <Tag className="h-4 w-4 text-[#317d6e]" />
+                      <input
+                        value={activeNote.tags.join(', ')}
+                        onChange={(event) => updateNote({ tags: parseTagInput(event.target.value) })}
+                        className="min-w-0 flex-1 bg-transparent outline-none"
+                        placeholder="תגיות"
+                      />
+                    </label>
+                  </div>
+                </div>
+
+                <textarea
+                  value={activeNote.body}
+                  onChange={(event) => updateNote({ body: event.target.value })}
+                  placeholder="להתחיל לכתוב..."
+                  className="min-h-[420px] flex-1 resize-none bg-[#fcfcf8] px-5 py-6 text-lg leading-9 text-[#24302a] outline-none placeholder:text-[#9ba49f] lg:px-8"
+                />
+
+                <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[#deded4] px-5 py-3 text-xs font-bold text-[#6a766f] lg:px-8">
+                  <span>{wordCount} מילים</span>
+                  <span>{activeNote.tags.length} תגיות</span>
+                  <span>{formatRelativeDate(activeNote.updatedAt)}</span>
+                </footer>
+              </div>
+            ) : (
+              <div className="grid h-full min-h-[520px] place-items-center px-5 text-center">
+                <div>
+                  <FileText className="mx-auto mb-4 h-10 w-10 text-[#87918b]" />
+                  <p className="text-xl font-black">אין פתק פתוח</p>
+                  <button
+                    type="button"
+                    onClick={createNote}
+                    className="mt-4 inline-flex h-10 items-center gap-2 rounded-md bg-[#183c35] px-4 text-sm font-bold text-white"
+                  >
+                    <Plus className="h-4 w-4" />
+                    פתק חדש
+                  </button>
+                </div>
+              </div>
+            )}
+          </article>
+        </section>
+      </div>
+    </main>
+  )
+}
