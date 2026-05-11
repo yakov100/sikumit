@@ -184,11 +184,60 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-  .line-clamp-3 {
+.line-clamp-3 {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.sikumit-editor h1,
+.sikumit-editor h2,
+.sikumit-editor h3 {
+  margin: 1.15rem 0 0.45rem;
+  font-weight: 900;
+  line-height: 1.35;
+  color: #17211b;
+}
+
+.sikumit-editor h1 {
+  font-size: 2rem;
+}
+
+.sikumit-editor h2 {
+  font-size: 1.5rem;
+}
+
+.sikumit-editor h3 {
+  font-size: 1.25rem;
+}
+
+.sikumit-editor p {
+  margin: 0.45rem 0;
+}
+
+.sikumit-editor ul,
+.sikumit-editor ol {
+  margin: 0.75rem 0;
+  padding-right: 1.4rem;
+}
+
+.sikumit-editor ul {
+  list-style: disc;
+}
+
+.sikumit-editor ol {
+  list-style: decimal;
+}
+
+.sikumit-editor li {
+  margin: 0.25rem 0;
+  padding-right: 0.2rem;
+}
+
+.sikumit-editor b,
+.sikumit-editor strong {
+  font-weight: 900;
 }
 
 .agent-particle {

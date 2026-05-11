@@ -31,6 +31,7 @@ type Note = {
   id: string
   title: string
   body: string
+  bodyHtml?: string
   tags: string[]
   folder: string
   favorite: boolean
@@ -40,10 +41,21 @@ type Note = {
 }
 
 type Filter = 'all' | 'recent' | 'favorites' | 'archive'
+type ImportedBlock = { type: 'heading' | 'list' | 'paragraph'; text: string }
+type EditorCommand = 'bold' | 'insertUnorderedList' | 'formatBlock' | 'insertCheckbox'
 
 const storageKey = 'quiet-notes-workspace'
+const dbName = 'sikumit-db'
+const dbStore = 'notes'
+const dbRecordKey = 'workspace'
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
+const editorActions: { icon: typeof Heading2; label: string; command: EditorCommand }[] = [
+  { icon: Heading2, label: 'כותרת', command: 'formatBlock' },
+  { icon: Bold, label: 'מודגש', command: 'bold' },
+  { icon: List, label: 'רשימה', command: 'insertUnorderedList' },
+  { icon: CheckSquare, label: 'צ׳קבוקס', command: 'insertCheckbox' },
+]
 
 const initialNotes: Note[] = [
   {
@@ -132,6 +144,98 @@ function parseTagInput(value: string) {
     .split(',')
     .map((tag) => tag.trim())
     .filter(Boolean)
+}
+
+function plainTextToHtml(value: string) {
+  const paragraphs = value.split(/\n{2,}/).map((paragraph) => paragraph.trim())
+  return paragraphs
+    .filter(Boolean)
+    .map((paragraph) => `<p>${escapeXml(paragraph).replaceAll('\n', '<br>')}</p>`)
+    .join('') || '<p><br></p>'
+}
+
+function htmlToPlainText(value: string) {
+  const element = document.createElement('div')
+  element.innerHTML = value
+  return (element.innerText || element.textContent || '').trim()
+}
+
+function blocksToPlainText(blocks: ImportedBlock[]) {
+  return blocks
+    .map((block) => (block.type === 'list' ? `- ${block.text}` : block.text))
+    .join('\n\n')
+    .trim()
+}
+
+function blocksToHtml(blocks: ImportedBlock[]) {
+  const htmlParts: string[] = []
+  let listItems: string[] = []
+
+  const flushList = () => {
+    if (listItems.length === 0) return
+    htmlParts.push(`<ul>${listItems.map((item) => `<li>${escapeXml(item)}</li>`).join('')}</ul>`)
+    listItems = []
+  }
+
+  for (const block of blocks) {
+    if (block.type === 'list') {
+      listItems.push(block.text)
+      continue
+    }
+
+    flushList()
+    if (block.type === 'heading') {
+      htmlParts.push(`<h2>${escapeXml(block.text)}</h2>`)
+    } else {
+      htmlParts.push(`<p>${escapeXml(block.text)}</p>`)
+    }
+  }
+
+  flushList()
+  return htmlParts.join('') || '<p><br></p>'
+}
+
+function noteHtml(note: Note) {
+  return note.bodyHtml || plainTextToHtml(note.body)
+}
+
+function openNotesDb() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(dbName, 1)
+
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(dbStore)
+    }
+    request.onsuccess = () => resolve(request.result)
+    request.onerror = () => reject(request.error)
+  })
+}
+
+async function loadNotesFromDb() {
+  const db = await openNotesDb()
+
+  return new Promise<Note[] | null>((resolve, reject) => {
+    const transaction = db.transaction(dbStore, 'readonly')
+    const request = transaction.objectStore(dbStore).get(dbRecordKey)
+
+    request.onsuccess = () => resolve((request.result as Note[] | undefined) ?? null)
+    request.onerror = () => reject(request.error)
+    transaction.oncomplete = () => db.close()
+  })
+}
+
+async function saveNotesToDb(notes: Note[]) {
+  const db = await openNotesDb()
+
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(dbStore, 'readwrite')
+    transaction.objectStore(dbStore).put(notes, dbRecordKey)
+    transaction.oncomplete = () => {
+      db.close()
+      resolve()
+    }
+    transaction.onerror = () => reject(transaction.error)
+  })
 }
 
 function escapeXml(value: string) {
@@ -251,14 +355,43 @@ function createZip(entries: { name: string; content: string }[]) {
   return concatBytes([...localParts, centralDirectory, end])
 }
 
+function createDocxParagraph(text: string, style?: string) {
+  const styleXml = style ? `<w:pStyle w:val="${style}"/>` : ''
+  return `<w:p><w:pPr><w:bidi/>${styleXml}</w:pPr><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`
+}
+
+function htmlToDocxParagraphs(html: string) {
+  const root = document.createElement('div')
+  root.innerHTML = html
+  const paragraphs: string[] = []
+
+  const visit = (node: Element) => {
+    const tag = node.tagName.toLowerCase()
+    const text = (node.textContent || '').trim()
+    if (!text) return
+
+    if (tag === 'h1' || tag === 'h2' || tag === 'h3') {
+      paragraphs.push(createDocxParagraph(text, 'Heading1'))
+      return
+    }
+    if (tag === 'li') {
+      paragraphs.push(createDocxParagraph(`• ${text}`, 'ListParagraph'))
+      return
+    }
+    if (tag === 'p' || tag === 'div') {
+      paragraphs.push(createDocxParagraph(text))
+      return
+    }
+
+    Array.from(node.children).forEach(visit)
+  }
+
+  Array.from(root.children).forEach(visit)
+  return paragraphs.length > 0 ? paragraphs.join('') : createDocxParagraph(htmlToPlainText(html))
+}
+
 function createDocumentXml(note: Note) {
-  const lines = note.body.split(/\r?\n/)
-  const paragraphs = lines
-    .map((line) => {
-      const text = escapeXml(line)
-      return `<w:p><w:pPr><w:bidi/></w:pPr><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`
-    })
-    .join('')
+  const paragraphs = htmlToDocxParagraphs(noteHtml(note))
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:xml="http://www.w3.org/XML/1998/namespace">
@@ -379,17 +512,30 @@ async function readZipEntry(buffer: ArrayBuffer, targetName: string) {
   throw new Error('לא נמצא תוכן Word בקובץ')
 }
 
-function extractTextFromDocumentXml(xmlText: string) {
+function extractBlocksFromDocumentXml(xmlText: string) {
   const xml = new DOMParser().parseFromString(xmlText, 'application/xml')
   const paragraphs = Array.from(xml.getElementsByTagNameNS('*', 'p'))
 
   return paragraphs
-    .map((paragraph) =>
-      Array.from(paragraph.getElementsByTagNameNS('*', 't'))
+    .map((paragraph): ImportedBlock | null => {
+      const text = Array.from(paragraph.getElementsByTagNameNS('*', 't'))
         .map((node) => node.textContent ?? '')
-        .join(''),
-    )
-    .filter((line) => line.trim().length > 0)
+        .join('')
+        .trim()
+
+      if (!text) return null
+
+      const style = paragraph.getElementsByTagNameNS('*', 'pStyle')[0]?.getAttribute('w:val') ?? ''
+      const hasNumbering = paragraph.getElementsByTagNameNS('*', 'numPr').length > 0
+      const isHeading = /heading|title|כותר/i.test(style)
+      const isList = hasNumbering || /list|bullet/i.test(style)
+
+      return {
+        type: isHeading ? 'heading' : isList ? 'list' : 'paragraph',
+        text,
+      }
+    })
+    .filter((block): block is ImportedBlock => Boolean(block))
 }
 
 export function NotesWorkspace() {
@@ -404,28 +550,49 @@ export function NotesWorkspace() {
   const [fileStatus, setFileStatus] = useState('')
   const [offlineStatus, setOfflineStatus] = useState('מכין מצב אופליין...')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const editorRef = useRef<HTMLDivElement>(null)
+  const loadedEditorId = useRef<string | null>(null)
 
   useEffect(() => {
-    const saved = window.localStorage.getItem(storageKey)
-    if (!saved) return
+    const loadNotes = async () => {
+      try {
+        const indexedNotes = await loadNotesFromDb()
+        if (indexedNotes?.length) {
+          window.setTimeout(() => {
+            setNotes(indexedNotes)
+            setActiveId(indexedNotes[0].id)
+          }, 0)
+          return
+        }
 
-    try {
-      const parsed = JSON.parse(saved) as Note[]
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        window.setTimeout(() => {
-          setNotes(parsed)
-          setActiveId(parsed[0].id)
-        }, 0)
+        const saved = window.localStorage.getItem(storageKey)
+        if (!saved) return
+
+        const parsed = JSON.parse(saved) as Note[]
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          await saveNotesToDb(parsed)
+          window.localStorage.removeItem(storageKey)
+          window.setTimeout(() => {
+            setNotes(parsed)
+            setActiveId(parsed[0].id)
+          }, 0)
+        }
+      } catch {
+        window.localStorage.removeItem(storageKey)
       }
-    } catch {
-      window.localStorage.removeItem(storageKey)
     }
+
+    void loadNotes()
   }, [])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      window.localStorage.setItem(storageKey, JSON.stringify(notes))
-      setSaveState('saved')
+      saveNotesToDb(notes)
+        .then(() => {
+          window.localStorage.removeItem(storageKey)
+          setSaveState('saved')
+        })
+        .catch(() => setSaveState('ready'))
     }, 280)
 
     return () => window.clearTimeout(timeout)
@@ -457,6 +624,13 @@ export function NotesWorkspace() {
   const activeNote = notes.find((note) => note.id === activeId) ?? notes[0]
   const folders = useMemo(() => uniqueValues(notes, 'folder'), [notes])
   const tags = useMemo(() => uniqueValues(notes, 'tags'), [notes])
+
+  useEffect(() => {
+    if (!editorRef.current || !activeNote) return
+    if (loadedEditorId.current === activeNote.id) return
+    editorRef.current.innerHTML = noteHtml(activeNote)
+    loadedEditorId.current = activeNote.id
+  }, [activeId, activeNote, notes])
 
   const filteredNotes = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -490,12 +664,33 @@ export function NotesWorkspace() {
     )
   }
 
+  function updateEditorContent() {
+    if (!editorRef.current) return
+    const bodyHtml = editorRef.current.innerHTML
+    updateNote({ bodyHtml, body: htmlToPlainText(bodyHtml) })
+  }
+
+  function runEditorCommand(command: EditorCommand) {
+    editorRef.current?.focus()
+
+    if (command === 'insertCheckbox') {
+      document.execCommand('insertHTML', false, '<p>☐ </p>')
+    } else if (command === 'formatBlock') {
+      document.execCommand('formatBlock', false, 'h2')
+    } else {
+      document.execCommand(command)
+    }
+
+    updateEditorContent()
+  }
+
   function createNote() {
     const now = new Date().toISOString()
     const note: Note = {
       id: `n-${crypto.randomUUID()}`,
       title: query.trim() || 'פתק חדש',
       body: '',
+      bodyHtml: '<p><br></p>',
       tags: activeTag ? [activeTag] : ['כללי'],
       folder: activeFolder || 'כללי',
       favorite: false,
@@ -525,15 +720,17 @@ export function NotesWorkspace() {
 
     try {
       const xml = await readZipEntry(await file.arrayBuffer(), 'word/document.xml')
-      const paragraphs = extractTextFromDocumentXml(xml)
-      const [firstLine, ...rest] = paragraphs
+      const blocks = extractBlocksFromDocumentXml(xml)
+      const [firstLine, ...rest] = blocks
       const now = new Date().toISOString()
-      const title = firstLine?.trim() || file.name.replace(/\.docx$/i, '')
-      const body = rest.length > 0 ? rest.join('\n\n') : paragraphs.join('\n\n')
+      const title = firstLine?.text.trim() || file.name.replace(/\.docx$/i, '')
+      const bodyBlocks = rest.length > 0 ? rest : blocks
+      const bodyHtml = blocksToHtml(bodyBlocks)
       const note: Note = {
         id: `n-${crypto.randomUUID()}`,
         title,
-        body,
+        body: blocksToPlainText(bodyBlocks),
+        bodyHtml,
         tags: ['Word'],
         folder: 'מיובאים',
         favorite: false,
@@ -864,17 +1061,21 @@ export function NotesWorkspace() {
                 <div className="border-b border-[#deded4] px-5 py-4 lg:px-8">
                   <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex flex-wrap items-center gap-2">
-                      {[Heading2, Bold, List, CheckSquare].map((Icon, index) => (
+                      {editorActions.map((item) => {
+                        const Icon = item.icon
+                        return (
                         <button
-                          key={index}
+                          key={item.label}
                           type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => runEditorCommand(item.command)}
                           className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#4e5b55] transition hover:border-[#317d6e] hover:text-[#183c35]"
-                          aria-label={['כותרת', 'מודגש', 'רשימה', 'צ׳קבוקס'][index]}
-                          title={['כותרת', 'מודגש', 'רשימה', 'צ׳קבוקס'][index]}
+                          aria-label={item.label}
+                          title={item.label}
                         >
                           <Icon className="h-4 w-4" />
                         </button>
-                      ))}
+                      )})}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -949,11 +1150,15 @@ export function NotesWorkspace() {
                   </div>
                 </div>
 
-                <textarea
-                  value={activeNote.body}
-                  onChange={(event) => updateNote({ body: event.target.value })}
-                  placeholder="להתחיל לכתוב..."
-                  className="min-h-[420px] flex-1 resize-none bg-[#fcfcf8] px-5 py-6 text-lg leading-9 text-[#24302a] outline-none placeholder:text-[#9ba49f] lg:px-8"
+                <div
+                  ref={editorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-label="תוכן הפתק"
+                  onInput={updateEditorContent}
+                  onBlur={updateEditorContent}
+                  className="sikumit-editor min-h-[420px] flex-1 overflow-y-auto bg-[#fcfcf8] px-5 py-6 text-lg leading-9 text-[#24302a] outline-none empty:before:text-[#9ba49f] empty:before:content-['להתחיל_לכתוב...'] lg:px-8"
                 />
 
                 <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[#deded4] px-5 py-3 text-xs font-bold text-[#6a766f] lg:px-8">
