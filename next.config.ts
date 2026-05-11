@@ -1,16 +1,16 @@
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
+  output: 'export',
+  basePath: '/sikumit',
+  assetPrefix: '/sikumit/',
+  trailingSlash: true,
   turbopack: {
     root: process.cwd(),
   },
   images: {
-    remotePatterns: [
-      { protocol: 'https', hostname: 'images.unsplash.com' },
-      { protocol: 'https', hostname: 'plus.unsplash.com' },
-    ],
+    unoptimized: true,
   },
-  serverExternalPackages: ['better-sqlite3'],
 }
 
 export default nextConfig

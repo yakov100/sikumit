@@ -2,6 +2,14 @@
 
 אפליקציית Next.js לכתיבה, שמירה, ארגון וחיפוש של פתקים וסיכומים בעברית.
 
+## האתר
+
+לאחר הפעלת GitHub Pages בריפוזיטורי, האתר יהיה זמין בכתובת:
+
+```text
+https://yakov100.github.io/sikumit/
+```
+
 ## יכולות
 
 - כתיבה ושמירה אוטומטית של פתקים בדפדפן
@@ -27,3 +35,7 @@ http://localhost:3000
 npm run lint
 npm run build
 ```
+
+## GitHub Pages
+
+כל push לענף `main` מריץ GitHub Actions שמבצע static export ומפרסם את תיקיית `out` ל-GitHub Pages.
