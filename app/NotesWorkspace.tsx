@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -115,11 +115,21 @@ const styleOptions = [
 ]
 
 const fontSizeOptions = [
+  { label: '10', value: '1' },
   { label: '12', value: '2' },
-  { label: '16', value: '3' },
-  { label: '20', value: '4' },
-  { label: '24', value: '5' },
-  { label: '32', value: '6' },
+  { label: '14', value: '3' },
+  { label: '16', value: '4' },
+  { label: '18', value: '5' },
+  { label: '24', value: '6' },
+  { label: '32', value: '7' },
+]
+
+const fontFamilyOptions = [
+  { label: 'Heebo', value: 'Heebo, Arial, sans-serif' },
+  { label: 'Arial', value: 'Arial, sans-serif' },
+  { label: 'David', value: 'David, serif' },
+  { label: 'Miriam', value: 'Miriam, sans-serif' },
+  { label: 'Noto Sans Hebrew', value: '"Noto Sans Hebrew", Arial, sans-serif' },
 ]
 
 const colorOptions = ['#17211b', '#1d4ed8', '#047857', '#b45309', '#be123c', '#6d28d9']
@@ -226,6 +236,51 @@ function htmlToPlainText(value: string) {
   const element = document.createElement('div')
   element.innerHTML = value
   return (element.innerText || element.textContent || '').trim()
+}
+
+function cleanSearchHighlights(root: HTMLElement) {
+  const highlights = Array.from(root.querySelectorAll('mark[data-search-highlight="true"]'))
+  highlights.forEach((highlight) => {
+    const text = document.createTextNode(highlight.textContent ?? '')
+    highlight.replaceWith(text)
+  })
+  root.normalize()
+}
+
+function getCleanHtml(root: HTMLElement) {
+  const clone = root.cloneNode(true) as HTMLElement
+  cleanSearchHighlights(clone)
+  return clone.innerHTML
+}
+
+function highlightFirstEditorMatch(root: HTMLElement, query: string) {
+  const normalizedQuery = query.trim()
+  if (!normalizedQuery) return false
+
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+
+  while (node) {
+    const text = node.textContent ?? ''
+    const index = text.toLowerCase().indexOf(normalizedQuery.toLowerCase())
+
+    if (index !== -1) {
+      const range = document.createRange()
+      range.setStart(node, index)
+      range.setEnd(node, index + normalizedQuery.length)
+
+      const mark = document.createElement('mark')
+      mark.dataset.searchHighlight = 'true'
+      mark.className = 'sikumit-search-highlight'
+      range.surroundContents(mark)
+      window.setTimeout(() => mark.scrollIntoView({ block: 'center', behavior: 'smooth' }), 80)
+      return true
+    }
+
+    node = walker.nextNode()
+  }
+
+  return false
 }
 
 function blocksToPlainText(blocks: ImportedBlock[]) {
@@ -425,7 +480,22 @@ function createZip(entries: { name: string; content: string }[]) {
 
 function createDocxParagraph(text: string, style?: string) {
   const styleXml = style ? `<w:pStyle w:val="${style}"/>` : ''
-  return `<w:p><w:pPr><w:bidi/>${styleXml}</w:pPr><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`
+  const paragraphProps = [
+    styleXml,
+    '<w:bidi/>',
+    '<w:jc w:val="right"/>',
+    '<w:spacing w:before="0" w:after="80" w:line="252" w:lineRule="auto"/>',
+  ].join('')
+  const runProps = [
+    '<w:rFonts w:ascii="Heebo" w:hAnsi="Heebo" w:cs="Heebo"/>',
+    '<w:sz w:val="22"/>',
+    '<w:szCs w:val="22"/>',
+    '<w:rtl/>',
+    '<w:lang w:val="he-IL" w:bidi="he-IL"/>',
+    '<w:noProof/>',
+  ].join('')
+
+  return `<w:p><w:pPr>${paragraphProps}</w:pPr><w:r><w:rPr>${runProps}</w:rPr><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`
 }
 
 function htmlToDocxParagraphs(html: string) {
@@ -464,11 +534,23 @@ function createDocumentXml(note: Note) {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:xml="http://www.w3.org/XML/1998/namespace">
   <w:body>
-    <w:p><w:pPr><w:bidi/><w:pStyle w:val="Title"/></w:pPr><w:r><w:t xml:space="preserve">${escapeXml(note.title)}</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="Title"/><w:bidi/><w:jc w:val="right"/><w:spacing w:before="0" w:after="160" w:line="276" w:lineRule="auto"/></w:pPr><w:r><w:rPr><w:rFonts w:ascii="Heebo" w:hAnsi="Heebo" w:cs="Heebo"/><w:sz w:val="32"/><w:szCs w:val="32"/><w:b/><w:bCs/><w:rtl/><w:lang w:val="he-IL" w:bidi="he-IL"/><w:noProof/></w:rPr><w:t xml:space="preserve">${escapeXml(note.title)}</w:t></w:r></w:p>
     ${paragraphs}
-    <w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>
+    <w:sectPr><w:bidi/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr>
   </w:body>
 </w:document>`
+}
+
+function createSettingsXml() {
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:defaultTabStop w:val="720"/>
+  <w:displayBackgroundShape/>
+  <w:proofState w:spelling="clean" w:grammar="clean"/>
+  <w:hideSpellingErrors/>
+  <w:hideGrammaticalErrors/>
+  <w:themeFontLang w:val="he-IL" w:bidi="he-IL"/>
+</w:settings>`
 }
 
 function createDocxBlob(note: Note) {
@@ -481,6 +563,7 @@ function createDocxBlob(note: Note) {
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>`,
@@ -492,6 +575,13 @@ function createDocxBlob(note: Note) {
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
+</Relationships>`,
+    },
+    {
+      name: 'word/_rels/document.xml.rels',
+      content: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>
 </Relationships>`,
     },
     {
@@ -513,6 +603,10 @@ function createDocxBlob(note: Note) {
     {
       name: 'word/document.xml',
       content: createDocumentXml(note),
+    },
+    {
+      name: 'word/settings.xml',
+      content: createSettingsXml(),
     },
   ]
 
@@ -618,10 +712,12 @@ export function NotesWorkspace() {
   const [articleNoteDraft, setArticleNoteDraft] = useState('')
   const [saveState, setSaveState] = useState<'ready' | 'saving' | 'saved'>('ready')
   const [fileStatus, setFileStatus] = useState('')
+  const [formatToolbarOpen, setFormatToolbarOpen] = useState(true)
   const [offlineStatus, setOfflineStatus] = useState('מכין מצב אופליין...')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
   const loadedEditorId = useRef<string | null>(null)
+  const renderedSearchQuery = useRef('')
 
   useEffect(() => {
     const loadNotes = async () => {
@@ -699,10 +795,15 @@ export function NotesWorkspace() {
 
   useEffect(() => {
     if (!editorRef.current || !activeNote) return
-    if (loadedEditorId.current === activeNote.id) return
+    const normalizedQuery = query.trim()
+    const shouldRender = loadedEditorId.current !== activeNote.id || renderedSearchQuery.current !== normalizedQuery
+    if (!shouldRender) return
+
     editorRef.current.innerHTML = noteHtml(activeNote)
+    if (normalizedQuery) highlightFirstEditorMatch(editorRef.current, normalizedQuery)
     loadedEditorId.current = activeNote.id
-  }, [activeId, activeNote, notes])
+    renderedSearchQuery.current = normalizedQuery
+  }, [activeId, activeNote, notes, query])
 
   const filteredNotes = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase()
@@ -746,7 +847,7 @@ export function NotesWorkspace() {
 
   function updateEditorContent() {
     if (!editorRef.current) return
-    const bodyHtml = editorRef.current.innerHTML
+    const bodyHtml = getCleanHtml(editorRef.current)
     updateNote({ bodyHtml, body: htmlToPlainText(bodyHtml) })
   }
 
@@ -781,6 +882,8 @@ export function NotesWorkspace() {
   }
 
   function deleteArticleNote(id: string) {
+    if (!window.confirm('למחוק את ההערה הזו?')) return
+
     updateArticleNotes(activeArticleNotes.filter((articleNote) => articleNote.id !== id))
   }
 
@@ -810,6 +913,12 @@ export function NotesWorkspace() {
     updateEditorContent()
   }
 
+  function applyFontFamily(value: string) {
+    editorRef.current?.focus()
+    document.execCommand('fontName', false, value)
+    updateEditorContent()
+  }
+
   function applyColor(command: 'foreColor' | 'hiliteColor' | 'backColor', value: string) {
     editorRef.current?.focus()
     document.execCommand(command, false, value)
@@ -819,6 +928,16 @@ export function NotesWorkspace() {
   function insertQuote() {
     editorRef.current?.focus()
     document.execCommand('formatBlock', false, 'blockquote')
+    updateEditorContent()
+  }
+
+  function handleEditorPaste(event: ClipboardEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const text = event.clipboardData.getData('text/plain')
+    if (!text) return
+
+    editorRef.current?.focus()
+    document.execCommand('insertText', false, text)
     updateEditorContent()
   }
 
@@ -847,6 +966,8 @@ export function NotesWorkspace() {
   }
 
   function deleteNote(id: string) {
+    if (!window.confirm('למחוק את הפתק הזה?')) return
+
     setSaveState('saving')
     setNotes((current) => {
       const next = current.filter((note) => note.id !== id)
@@ -1289,7 +1410,21 @@ export function NotesWorkspace() {
               <div className="flex h-full flex-col">
                 <div className="border-b border-[#deded4] px-5 py-4 lg:px-8">
                   <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                    <div className="sikumit-ribbon flex flex-wrap items-center gap-2 rounded-md border border-[#deded4] bg-[#f6f6ef] p-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setFormatToolbarOpen((open) => !open)}
+                        className="inline-flex h-9 items-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 text-sm font-bold text-[#44514c] transition hover:border-[#317d6e] hover:text-[#183c35]"
+                        aria-expanded={formatToolbarOpen}
+                        aria-label={formatToolbarOpen ? 'הסתרת סרגל עריכה' : 'הצגת סרגל עריכה'}
+                        title={formatToolbarOpen ? 'הסתרת סרגל עריכה' : 'הצגת סרגל עריכה'}
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                        {formatToolbarOpen ? 'הסתר סרגל' : 'הצג סרגל'}
+                      </button>
+
+                      {formatToolbarOpen ? (
+                        <div className="sikumit-ribbon flex flex-wrap items-center gap-2 rounded-md border border-[#deded4] bg-[#f6f6ef] p-2">
                       <div className="flex items-center gap-1 border-l border-[#d8d8cf] pl-2">
                         {historyActions.map((item) => {
                           const Icon = item.icon
@@ -1326,9 +1461,21 @@ export function NotesWorkspace() {
                           aria-label="גודל טקסט"
                           onChange={(event) => applyFontSize(event.target.value)}
                           className="h-9 w-16 rounded-md border border-[#d8d8cf] bg-white px-2 text-sm font-bold text-[#44514c] outline-none"
-                          defaultValue="3"
+                          defaultValue="4"
                         >
                           {fontSizeOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="גופן"
+                          onChange={(event) => applyFontFamily(event.target.value)}
+                          className="h-9 rounded-md border border-[#d8d8cf] bg-white px-2 text-sm font-bold text-[#44514c] outline-none"
+                          defaultValue={fontFamilyOptions[0].value}
+                        >
+                          {fontFamilyOptions.map((option) => (
                             <option key={option.value} value={option.value}>
                               {option.label}
                             </option>
@@ -1427,6 +1574,8 @@ export function NotesWorkspace() {
                           <Minus className="h-4 w-4" />
                         </button>
                       </div>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -1504,11 +1653,13 @@ export function NotesWorkspace() {
                 <div
                   ref={editorRef}
                   contentEditable
+                  spellCheck={false}
                   suppressContentEditableWarning
                   role="textbox"
                   aria-label="תוכן הפתק"
                   onInput={updateEditorContent}
                   onBlur={updateEditorContent}
+                  onPaste={handleEditorPaste}
                   className="sikumit-editor min-h-[420px] flex-1 overflow-y-auto bg-[#fcfcf8] px-5 py-6 text-lg leading-9 text-[#24302a] outline-none empty:before:text-[#9ba49f] empty:before:content-['להתחיל_לכתוב...'] lg:px-8"
                 />
 

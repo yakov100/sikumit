@@ -258,15 +258,50 @@
 }
 
 .sikumit-editor font[size="4"] {
-  font-size: 1.25rem;
+  font-size: 1.125rem;
 }
 
 .sikumit-editor font[size="5"] {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
 }
 
 .sikumit-editor font[size="6"] {
+  font-size: 1.5rem;
+}
+
+.sikumit-editor font[size="7"] {
   font-size: 2rem;
+}
+
+.sikumit-editor font[size="1"] {
+  font-size: 0.75rem;
+}
+
+.sikumit-editor font[face*="Heebo"] {
+  font-family: var(--font-heebo, Heebo, Arial, sans-serif);
+}
+
+.sikumit-editor font[face*="Arial"] {
+  font-family: Arial, sans-serif;
+}
+
+.sikumit-editor font[face*="David"] {
+  font-family: David, serif;
+}
+
+.sikumit-editor font[face*="Miriam"] {
+  font-family: Miriam, sans-serif;
+}
+
+.sikumit-editor font[face*="Noto Sans Hebrew"] {
+  font-family: "Noto Sans Hebrew", Arial, sans-serif;
+}
+
+.sikumit-search-highlight {
+  border-radius: 0.25rem;
+  background: #ffe08a;
+  color: #17211b;
+  box-shadow: 0 0 0 2px rgba(255, 224, 138, 0.55);
 }
 
 .sikumit-editor b,
