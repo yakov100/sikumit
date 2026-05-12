@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Archive,
   Bold,
   CalendarDays,
@@ -11,18 +14,27 @@ import {
   FileText,
   Folder,
   Hash,
-  Heading2,
+  Highlighter,
   Heart,
+  Italic,
   List,
+  ListOrdered,
   Menu,
+  Minus,
   MoreHorizontal,
+  Palette,
   PenLine,
   Plus,
+  Quote,
+  Redo2,
   Save,
   Search,
   Star,
+  Strikethrough,
   Tag,
   Trash2,
+  Underline,
+  Undo2,
   Upload,
   X,
 } from 'lucide-react'
@@ -42,7 +54,21 @@ type Note = {
 
 type Filter = 'all' | 'recent' | 'favorites' | 'archive'
 type ImportedBlock = { type: 'heading' | 'list' | 'paragraph'; text: string }
-type EditorCommand = 'bold' | 'insertUnorderedList' | 'formatBlock' | 'insertCheckbox'
+type EditorCommand =
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'strikeThrough'
+  | 'insertUnorderedList'
+  | 'insertOrderedList'
+  | 'justifyRight'
+  | 'justifyCenter'
+  | 'justifyLeft'
+  | 'formatBlock'
+  | 'insertCheckbox'
+  | 'insertHorizontalRule'
+  | 'undo'
+  | 'redo'
 
 const storageKey = 'quiet-notes-workspace'
 const dbName = 'sikumit-db'
@@ -50,12 +76,45 @@ const dbStore = 'notes'
 const dbRecordKey = 'workspace'
 const textEncoder = new TextEncoder()
 const textDecoder = new TextDecoder()
-const editorActions: { icon: typeof Heading2; label: string; command: EditorCommand }[] = [
-  { icon: Heading2, label: 'כותרת', command: 'formatBlock' },
+const textFormatActions: { icon: typeof Bold; label: string; command: EditorCommand }[] = [
   { icon: Bold, label: 'מודגש', command: 'bold' },
-  { icon: List, label: 'רשימה', command: 'insertUnorderedList' },
+  { icon: Italic, label: 'נטוי', command: 'italic' },
+  { icon: Underline, label: 'קו תחתון', command: 'underline' },
+  { icon: Strikethrough, label: 'קו חוצה', command: 'strikeThrough' },
+]
+
+const paragraphActions: { icon: typeof List; label: string; command: EditorCommand }[] = [
+  { icon: AlignRight, label: 'יישור לימין', command: 'justifyRight' },
+  { icon: AlignCenter, label: 'יישור למרכז', command: 'justifyCenter' },
+  { icon: AlignLeft, label: 'יישור לשמאל', command: 'justifyLeft' },
+  { icon: List, label: 'רשימת תבליטים', command: 'insertUnorderedList' },
+  { icon: ListOrdered, label: 'רשימה ממוספרת', command: 'insertOrderedList' },
   { icon: CheckSquare, label: 'צ׳קבוקס', command: 'insertCheckbox' },
 ]
+
+const historyActions: { icon: typeof Undo2; label: string; command: EditorCommand }[] = [
+  { icon: Undo2, label: 'ביטול', command: 'undo' },
+  { icon: Redo2, label: 'ביצוע מחדש', command: 'redo' },
+]
+
+const styleOptions = [
+  { label: 'טקסט רגיל', value: 'p' },
+  { label: 'כותרת 1', value: 'h1' },
+  { label: 'כותרת 2', value: 'h2' },
+  { label: 'כותרת 3', value: 'h3' },
+  { label: 'ציטוט', value: 'blockquote' },
+]
+
+const fontSizeOptions = [
+  { label: '12', value: '2' },
+  { label: '16', value: '3' },
+  { label: '20', value: '4' },
+  { label: '24', value: '5' },
+  { label: '32', value: '6' },
+]
+
+const colorOptions = ['#17211b', '#1d4ed8', '#047857', '#b45309', '#be123c', '#6d28d9']
+const highlightOptions = ['#fff7ad', '#dbeafe', '#dcfce7', '#ffedd5', '#fce7f3', '#ffffff']
 
 const initialNotes: Note[] = [
   {
@@ -675,12 +734,36 @@ export function NotesWorkspace() {
 
     if (command === 'insertCheckbox') {
       document.execCommand('insertHTML', false, '<p>☐ </p>')
-    } else if (command === 'formatBlock') {
-      document.execCommand('formatBlock', false, 'h2')
+    } else if (command === 'insertHorizontalRule') {
+      document.execCommand('insertHorizontalRule')
     } else {
       document.execCommand(command)
     }
 
+    updateEditorContent()
+  }
+
+  function applyBlockStyle(value: string) {
+    editorRef.current?.focus()
+    document.execCommand('formatBlock', false, value)
+    updateEditorContent()
+  }
+
+  function applyFontSize(value: string) {
+    editorRef.current?.focus()
+    document.execCommand('fontSize', false, value)
+    updateEditorContent()
+  }
+
+  function applyColor(command: 'foreColor' | 'hiliteColor' | 'backColor', value: string) {
+    editorRef.current?.focus()
+    document.execCommand(command, false, value)
+    updateEditorContent()
+  }
+
+  function insertQuote() {
+    editorRef.current?.focus()
+    document.execCommand('formatBlock', false, 'blockquote')
     updateEditorContent()
   }
 
@@ -1059,23 +1142,145 @@ export function NotesWorkspace() {
             {activeNote ? (
               <div className="flex h-full flex-col">
                 <div className="border-b border-[#deded4] px-5 py-4 lg:px-8">
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {editorActions.map((item) => {
-                        const Icon = item.icon
-                        return (
+                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div className="sikumit-ribbon flex flex-wrap items-center gap-2 rounded-md border border-[#deded4] bg-[#f6f6ef] p-2">
+                      <div className="flex items-center gap-1 border-l border-[#d8d8cf] pl-2">
+                        {historyActions.map((item) => {
+                          const Icon = item.icon
+                          return (
+                            <button
+                              key={item.label}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => runEditorCommand(item.command)}
+                              className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#4e5b55] transition hover:border-[#317d6e] hover:text-[#183c35]"
+                              aria-label={item.label}
+                              title={item.label}
+                            >
+                              <Icon className="h-4 w-4" />
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <div className="flex items-center gap-2 border-l border-[#d8d8cf] pl-2">
+                        <select
+                          aria-label="סגנון פסקה"
+                          onChange={(event) => applyBlockStyle(event.target.value)}
+                          className="h-9 rounded-md border border-[#d8d8cf] bg-white px-2 text-sm font-bold text-[#44514c] outline-none"
+                          defaultValue="p"
+                        >
+                          {styleOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="גודל טקסט"
+                          onChange={(event) => applyFontSize(event.target.value)}
+                          className="h-9 w-16 rounded-md border border-[#d8d8cf] bg-white px-2 text-sm font-bold text-[#44514c] outline-none"
+                          defaultValue="3"
+                        >
+                          {fontSizeOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-center gap-1 border-l border-[#d8d8cf] pl-2">
+                        {textFormatActions.map((item) => {
+                          const Icon = item.icon
+                          return (
+                            <button
+                              key={item.label}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => runEditorCommand(item.command)}
+                              className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#4e5b55] transition hover:border-[#317d6e] hover:text-[#183c35]"
+                              aria-label={item.label}
+                              title={item.label}
+                            >
+                              <Icon className="h-4 w-4" />
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <div className="flex items-center gap-1 border-l border-[#d8d8cf] pl-2">
+                        {paragraphActions.map((item) => {
+                          const Icon = item.icon
+                          return (
+                            <button
+                              key={item.label}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => runEditorCommand(item.command)}
+                              className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#4e5b55] transition hover:border-[#317d6e] hover:text-[#183c35]"
+                              aria-label={item.label}
+                              title={item.label}
+                            >
+                              <Icon className="h-4 w-4" />
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      <div className="flex items-center gap-1 border-l border-[#d8d8cf] pl-2">
+                        <div className="flex items-center gap-1 rounded-md border border-[#d8d8cf] bg-white px-2 py-1" title="צבע טקסט">
+                          <Palette className="h-4 w-4 text-[#4e5b55]" />
+                          {colorOptions.map((color) => (
+                            <button
+                              key={color}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => applyColor('foreColor', color)}
+                              className="h-5 w-5 rounded border border-black/10"
+                              style={{ backgroundColor: color }}
+                              aria-label={`צבע טקסט ${color}`}
+                            />
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-1 rounded-md border border-[#d8d8cf] bg-white px-2 py-1" title="צבע סימון">
+                          <Highlighter className="h-4 w-4 text-[#4e5b55]" />
+                          {highlightOptions.map((color) => (
+                            <button
+                              key={color}
+                              type="button"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => applyColor('hiliteColor', color)}
+                              className="h-5 w-5 rounded border border-black/10"
+                              style={{ backgroundColor: color }}
+                              aria-label={`צבע סימון ${color}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1">
                         <button
-                          key={item.label}
                           type="button"
                           onMouseDown={(event) => event.preventDefault()}
-                          onClick={() => runEditorCommand(item.command)}
+                          onClick={insertQuote}
                           className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#4e5b55] transition hover:border-[#317d6e] hover:text-[#183c35]"
-                          aria-label={item.label}
-                          title={item.label}
+                          aria-label="ציטוט"
+                          title="ציטוט"
                         >
-                          <Icon className="h-4 w-4" />
+                          <Quote className="h-4 w-4" />
                         </button>
-                      )})}
+                        <button
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => runEditorCommand('insertHorizontalRule')}
+                          className="grid h-9 w-9 place-items-center rounded-md border border-[#d8d8cf] bg-white text-[#4e5b55] transition hover:border-[#317d6e] hover:text-[#183c35]"
+                          aria-label="קו מפריד"
+                          title="קו מפריד"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">

@@ -235,9 +235,47 @@
   padding-right: 0.2rem;
 }
 
+.sikumit-editor blockquote {
+  margin: 1rem 0;
+  border-right: 4px solid #317d6e;
+  background: #eef5ef;
+  padding: 0.75rem 1rem;
+  color: #3d4b45;
+}
+
+.sikumit-editor hr {
+  margin: 1.25rem 0;
+  border: 0;
+  border-top: 1px solid #d8d8cf;
+}
+
+.sikumit-editor font[size="2"] {
+  font-size: 0.875rem;
+}
+
+.sikumit-editor font[size="3"] {
+  font-size: 1rem;
+}
+
+.sikumit-editor font[size="4"] {
+  font-size: 1.25rem;
+}
+
+.sikumit-editor font[size="5"] {
+  font-size: 1.5rem;
+}
+
+.sikumit-editor font[size="6"] {
+  font-size: 2rem;
+}
+
 .sikumit-editor b,
 .sikumit-editor strong {
   font-weight: 900;
+}
+
+.sikumit-ribbon select {
+  max-width: 9rem;
 }
 
 .agent-particle {
