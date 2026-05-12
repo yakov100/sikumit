@@ -44,10 +44,19 @@ type Note = {
   title: string
   body: string
   bodyHtml?: string
+  articleNotes?: ArticleNote[]
   tags: string[]
   folder: string
   favorite: boolean
   archived: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+type ArticleNote = {
+  id: string
+  text: string
+  done: boolean
   createdAt: string
   updatedAt: string
 }
@@ -605,6 +614,8 @@ export function NotesWorkspace() {
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [activeFolder, setActiveFolder] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [articleNotebookOpen, setArticleNotebookOpen] = useState(false)
+  const [articleNoteDraft, setArticleNoteDraft] = useState('')
   const [saveState, setSaveState] = useState<'ready' | 'saving' | 'saved'>('ready')
   const [fileStatus, setFileStatus] = useState('')
   const [offlineStatus, setOfflineStatus] = useState('מכין מצב אופליין...')
@@ -681,6 +692,8 @@ export function NotesWorkspace() {
   }, [])
 
   const activeNote = notes.find((note) => note.id === activeId) ?? notes[0]
+  const activeArticleNotes = activeNote?.articleNotes ?? []
+  const activeArticleNotesCount = activeArticleNotes.filter((articleNote) => !articleNote.done).length
   const folders = useMemo(() => uniqueValues(notes, 'folder'), [notes])
   const tags = useMemo(() => uniqueValues(notes, 'tags'), [notes])
 
@@ -703,7 +716,15 @@ export function NotesWorkspace() {
         if (activeFolder && note.folder !== activeFolder) return false
 
         if (!normalizedQuery) return true
-        const searchable = [note.title, note.body, note.folder, ...note.tags].join(' ').toLowerCase()
+        const searchable = [
+          note.title,
+          note.body,
+          note.folder,
+          ...note.tags,
+          ...(note.articleNotes ?? []).map((articleNote) => articleNote.text),
+        ]
+          .join(' ')
+          .toLowerCase()
         return searchable.includes(normalizedQuery)
       })
       .sort((a, b) => {
@@ -727,6 +748,40 @@ export function NotesWorkspace() {
     if (!editorRef.current) return
     const bodyHtml = editorRef.current.innerHTML
     updateNote({ bodyHtml, body: htmlToPlainText(bodyHtml) })
+  }
+
+  function updateArticleNotes(articleNotes: ArticleNote[]) {
+    updateNote({ articleNotes })
+  }
+
+  function addArticleNote() {
+    const text = articleNoteDraft.trim()
+    if (!text) return
+
+    const now = new Date().toISOString()
+    const articleNote: ArticleNote = {
+      id: `an-${crypto.randomUUID()}`,
+      text,
+      done: false,
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    updateArticleNotes([articleNote, ...activeArticleNotes])
+    setArticleNoteDraft('')
+  }
+
+  function toggleArticleNote(id: string) {
+    const now = new Date().toISOString()
+    updateArticleNotes(
+      activeArticleNotes.map((articleNote) =>
+        articleNote.id === id ? { ...articleNote, done: !articleNote.done, updatedAt: now } : articleNote,
+      ),
+    )
+  }
+
+  function deleteArticleNote(id: string) {
+    updateArticleNotes(activeArticleNotes.filter((articleNote) => articleNote.id !== id))
   }
 
   function runEditorCommand(command: EditorCommand) {
@@ -774,6 +829,7 @@ export function NotesWorkspace() {
       title: query.trim() || 'פתק חדש',
       body: '',
       bodyHtml: '<p><br></p>',
+      articleNotes: [],
       tags: activeTag ? [activeTag] : ['כללי'],
       folder: activeFolder || 'כללי',
       favorite: false,
@@ -785,6 +841,7 @@ export function NotesWorkspace() {
     setSaveState('saving')
     setNotes((current) => [note, ...current])
     setActiveId(note.id)
+    setArticleNoteDraft('')
     setActiveFilter('all')
     setSidebarOpen(false)
   }
@@ -814,6 +871,7 @@ export function NotesWorkspace() {
         title,
         body: blocksToPlainText(bodyBlocks),
         bodyHtml,
+        articleNotes: [],
         tags: ['Word'],
         folder: 'מיובאים',
         favorite: false,
@@ -825,6 +883,7 @@ export function NotesWorkspace() {
       setSaveState('saving')
       setNotes((current) => [note, ...current])
       setActiveId(note.id)
+      setArticleNoteDraft('')
       setActiveFilter('all')
       setFileStatus('קובץ Word יובא לפתק חדש')
     } catch (error) {
@@ -1189,6 +1248,7 @@ export function NotesWorkspace() {
                           type="button"
                           onClick={() => {
                             setActiveId(note.id)
+                            setArticleNoteDraft('')
                             setSidebarOpen(false)
                           }}
                           className={`w-full rounded-md border p-4 text-right transition ${
@@ -1224,7 +1284,7 @@ export function NotesWorkspace() {
             </div>
           </div>
 
-          <article className="min-h-0 bg-[#fcfcf8] lg:h-[calc(100vh-4rem)]">
+          <article className="relative min-h-0 bg-[#fcfcf8] lg:h-[calc(100vh-4rem)]">
             {activeNote ? (
               <div className="flex h-full flex-col">
                 <div className="border-b border-[#deded4] px-5 py-4 lg:px-8">
@@ -1457,6 +1517,129 @@ export function NotesWorkspace() {
                   <span>{activeNote.tags.length} תגיות</span>
                   <span>{formatRelativeDate(activeNote.updatedAt)}</span>
                 </footer>
+
+                <button
+                  type="button"
+                  onClick={() => setArticleNotebookOpen(true)}
+                  className="fixed bottom-6 left-5 z-20 inline-flex h-12 items-center gap-2 rounded-md border border-[#c7d8d0] bg-[#183c35] px-4 text-sm font-black text-white shadow-lg shadow-black/15 transition hover:bg-[#225246] sm:left-6"
+                  aria-label="פתיחת פנקס מאמר"
+                  title="פנקס מאמר"
+                >
+                  <FileText className="h-5 w-5" />
+                  <span className="hidden sm:inline">פנקס מאמר</span>
+                  {activeArticleNotesCount > 0 ? (
+                    <span className="grid min-w-6 place-items-center rounded bg-white px-1.5 py-0.5 text-xs text-[#183c35]">
+                      {activeArticleNotesCount}
+                    </span>
+                  ) : null}
+                </button>
+
+                {articleNotebookOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="סגירת פנקס מאמר"
+                      className="fixed inset-0 z-30 bg-black/10"
+                      onClick={() => setArticleNotebookOpen(false)}
+                    />
+                    <aside className="fixed inset-y-0 left-0 z-40 flex w-[calc(100%-1.25rem)] max-w-[390px] flex-col border-r border-[#deded4] bg-[#fbfbf6] shadow-2xl sm:w-[380px]">
+                      <div className="flex h-16 items-center justify-between border-b border-[#deded4] px-4">
+                        <div>
+                          <p className="text-lg font-black text-[#17211b]">פנקס מאמר</p>
+                          <p className="text-xs font-bold text-[#6b7771]">{activeArticleNotesCount} הערות פעילות</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setArticleNotebookOpen(false)}
+                          className="grid h-9 w-9 place-items-center rounded-md text-[#58655f] hover:bg-[#ecece4]"
+                          aria-label="סגירת פנקס מאמר"
+                        >
+                          <X className="h-5 w-5" />
+                        </button>
+                      </div>
+
+                      <div className="border-b border-[#deded4] p-4">
+                        <label className="block">
+                          <span className="mb-2 block text-sm font-black text-[#27352f]">הערה חדשה</span>
+                          <textarea
+                            value={articleNoteDraft}
+                            onChange={(event) => setArticleNoteDraft(event.target.value)}
+                            onKeyDown={(event) => {
+                              if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addArticleNote()
+                            }}
+                            rows={4}
+                            className="w-full resize-none rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-sm leading-6 text-[#24302a] outline-none transition placeholder:text-[#929d97] focus:border-[#317d6e] focus:ring-2 focus:ring-[#317d6e]/15"
+                            placeholder="שאלה, רעיון, מקור לבדיקה..."
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={addArticleNote}
+                          disabled={!articleNoteDraft.trim()}
+                          className="mt-3 inline-flex h-10 items-center gap-2 rounded-md bg-[#183c35] px-4 text-sm font-bold text-white transition hover:bg-[#225246] disabled:cursor-not-allowed disabled:opacity-45"
+                        >
+                          <Plus className="h-4 w-4" />
+                          הוספת הערה
+                        </button>
+                      </div>
+
+                      <div className="flex-1 overflow-y-auto p-4">
+                        {activeArticleNotes.length === 0 ? (
+                          <div className="mt-8 text-center">
+                            <FileText className="mx-auto mb-3 h-8 w-8 text-[#87918b]" />
+                            <p className="font-black text-[#27352f]">אין הערות בפנקס</p>
+                            <p className="mt-2 text-sm leading-6 text-[#68756f]">
+                              הערות שתוסיף כאן יישמרו רק עם המאמר הזה.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {activeArticleNotes.map((articleNote) => (
+                              <div
+                                key={articleNote.id}
+                                className={`rounded-md border bg-white p-3 transition ${
+                                  articleNote.done ? 'border-[#d8d8cf] opacity-70' : 'border-[#c7d8d0]'
+                                }`}
+                              >
+                                <div className="flex items-start gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleArticleNote(articleNote.id)}
+                                    className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-md border transition ${
+                                      articleNote.done
+                                        ? 'border-[#317d6e] bg-[#e5efe9] text-[#183c35]'
+                                        : 'border-[#d8d8cf] text-[#6b7771] hover:border-[#317d6e]'
+                                    }`}
+                                    aria-label={articleNote.done ? 'סימון כהערה פעילה' : 'סימון כבוצע'}
+                                    title={articleNote.done ? 'החזרה לפעיל' : 'בוצע'}
+                                  >
+                                    <CheckSquare className="h-4 w-4" />
+                                  </button>
+                                  <p
+                                    className={`min-w-0 flex-1 whitespace-pre-wrap text-sm leading-6 text-[#27352f] ${
+                                      articleNote.done ? 'line-through decoration-[#7f8a84]' : ''
+                                    }`}
+                                  >
+                                    {articleNote.text}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteArticleNote(articleNote.id)}
+                                    className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-[#a34334] transition hover:bg-[#fff0ed]"
+                                    aria-label="מחיקת הערה"
+                                    title="מחיקה"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </aside>
+                  </>
+                ) : null}
               </div>
             ) : (
               <div className="grid h-full min-h-[520px] place-items-center px-5 text-center">
