@@ -1521,14 +1521,13 @@ export function NotesWorkspace() {
                 <button
                   type="button"
                   onClick={() => setArticleNotebookOpen(true)}
-                  className="fixed bottom-6 left-5 z-20 inline-flex h-12 items-center gap-2 rounded-md border border-[#c7d8d0] bg-[#183c35] px-4 text-sm font-black text-white shadow-lg shadow-black/15 transition hover:bg-[#225246] sm:left-6"
+                  className="fixed bottom-6 left-5 z-20 grid h-14 w-14 place-items-center rounded-full border border-[#c7d8d0] bg-[#183c35] text-white shadow-lg shadow-black/15 transition hover:bg-[#225246] sm:left-6"
                   aria-label="פתיחת פנקס מאמר"
                   title="פנקס מאמר"
                 >
                   <FileText className="h-5 w-5" />
-                  <span className="hidden sm:inline">פנקס מאמר</span>
                   {activeArticleNotesCount > 0 ? (
-                    <span className="grid min-w-6 place-items-center rounded bg-white px-1.5 py-0.5 text-xs text-[#183c35]">
+                    <span className="absolute -right-1 -top-1 grid min-h-6 min-w-6 place-items-center rounded-full border border-[#183c35] bg-white px-1.5 text-xs font-black text-[#183c35]">
                       {activeArticleNotesCount}
                     </span>
                   ) : null}
