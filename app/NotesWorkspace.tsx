@@ -854,9 +854,95 @@ export function NotesWorkspace() {
 
   return (
     <main className="min-h-screen bg-[#f7f7f2] text-[#17211b]">
-      <div className="flex min-h-screen">
+      <div className="min-h-screen pr-16">
+        <nav className="fixed inset-y-0 right-0 z-50 flex w-16 flex-col items-center gap-2 border-l border-[#deded4] bg-[#fbfbf6] px-2 py-3 shadow-sm">
+          <button
+            type="button"
+            onClick={() => setSidebarOpen((open) => !open)}
+            className="grid h-11 w-11 place-items-center rounded-md bg-[#183c35] text-white transition hover:bg-[#225246]"
+            aria-label="פתיחת סיידבר"
+            title="סיידבר"
+          >
+            <PenLine className="h-5 w-5" />
+          </button>
+
+          <div className="my-2 h-px w-9 bg-[#deded4]" />
+
+          <button
+            type="button"
+            onClick={createNote}
+            className="grid h-10 w-10 place-items-center rounded-md text-[#44514c] transition hover:bg-[#e5efe9] hover:text-[#183c35]"
+            aria-label="פתק חדש"
+            title="פתק חדש"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="grid h-10 w-10 place-items-center rounded-md text-[#44514c] transition hover:bg-[#e5efe9] hover:text-[#183c35]"
+            aria-label="ייבוא Word"
+            title="ייבוא Word"
+          >
+            <Upload className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={exportActiveNote}
+            disabled={!activeNote}
+            className="grid h-10 w-10 place-items-center rounded-md text-[#44514c] transition hover:bg-[#e5efe9] hover:text-[#183c35] disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label="ייצוא Word"
+            title="ייצוא Word"
+          >
+            <Download className="h-5 w-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="grid h-10 w-10 place-items-center rounded-md text-[#44514c] transition hover:bg-[#e5efe9] hover:text-[#183c35]"
+            aria-label="חיפוש וסינון"
+            title="חיפוש וסינון"
+          >
+            <Search className="h-5 w-5" />
+          </button>
+
+          <div className="my-2 h-px w-9 bg-[#deded4]" />
+
+          {filters.map((filter) => {
+            const Icon = filter.icon
+            const selected = activeFilter === filter.id
+
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                onClick={() => setActiveFilter(filter.id)}
+                className={`grid h-10 w-10 place-items-center rounded-md transition ${
+                  selected ? 'bg-[#e5efe9] text-[#183c35]' : 'text-[#44514c] hover:bg-[#e5efe9] hover:text-[#183c35]'
+                }`}
+                aria-label={filter.label}
+                title={filter.label}
+              >
+                <Icon className="h-5 w-5" />
+              </button>
+            )
+          })}
+
+          <div className="mt-auto">
+            <button
+              type="button"
+              onClick={() => setSidebarOpen((open) => !open)}
+              className="grid h-10 w-10 place-items-center rounded-md text-[#44514c] transition hover:bg-[#e5efe9] hover:text-[#183c35]"
+              aria-label="פתיחה וסגירה"
+              title="פתיחה וסגירה"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </div>
+        </nav>
+
         <aside
-          className={`fixed inset-y-0 right-0 z-40 w-[292px] border-l border-[#deded4] bg-[#fbfbf6] transition-transform duration-200 lg:static lg:translate-x-0 ${
+          className={`fixed inset-y-0 right-16 z-40 w-[292px] border-l border-[#deded4] bg-[#fbfbf6] shadow-xl transition-transform duration-200 ${
             sidebarOpen ? 'translate-x-0' : 'translate-x-full'
           }`}
         >
@@ -874,7 +960,7 @@ export function NotesWorkspace() {
               <button
                 type="button"
                 onClick={() => setSidebarOpen(false)}
-                className="grid h-9 w-9 place-items-center rounded-md text-[#58655f] hover:bg-[#ecece4] lg:hidden"
+                className="grid h-9 w-9 place-items-center rounded-md text-[#58655f] hover:bg-[#ecece4]"
                 aria-label="סגירת תפריט"
               >
                 <X className="h-5 w-5" />
@@ -1020,7 +1106,7 @@ export function NotesWorkspace() {
           <button
             type="button"
             aria-label="סגירת תפריט"
-            className="fixed inset-0 z-30 bg-black/20 lg:hidden"
+            className="fixed inset-0 z-30 bg-black/10"
             onClick={() => setSidebarOpen(false)}
           />
         ) : null}
