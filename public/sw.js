@@ -1,4 +1,4 @@
-const CACHE_NAME = 'sikumit-offline-v3';
+const CACHE_NAME = 'sikumit-offline-v4';
 const CORE_ASSETS = [
   '/',
   '/manifest.webmanifest',
@@ -29,6 +29,11 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  if (url.pathname.startsWith('/_next/')) {
+    event.respondWith(fetch(request));
+    return;
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(
