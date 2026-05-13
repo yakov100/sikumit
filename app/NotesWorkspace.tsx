@@ -20,6 +20,8 @@ import {
   List,
   ListOrdered,
   Menu,
+  Mic,
+  MicOff,
   Minus,
   MoreHorizontal,
   Palette,
@@ -63,6 +65,7 @@ type ArticleNote = {
 
 type Filter = 'all' | 'recent' | 'favorites' | 'archive'
 type ImportedBlock = { type: 'heading' | 'list' | 'paragraph'; text: string }
+type DictationState = 'unsupported' | 'idle' | 'listening' | 'error'
 type EditorCommand =
   | 'bold'
   | 'italic'
@@ -116,6 +119,7 @@ const styleOptions = [
 
 const fontSizeOptions = [
   { label: '10', value: '1' },
+  { label: '11', value: '11pt' },
   { label: '12', value: '2' },
   { label: '14', value: '3' },
   { label: '16', value: '4' },
@@ -134,6 +138,49 @@ const fontFamilyOptions = [
 
 const colorOptions = ['#17211b', '#1d4ed8', '#047857', '#b45309', '#be123c', '#6d28d9']
 const highlightOptions = ['#fff7ad', '#dbeafe', '#dcfce7', '#ffedd5', '#fce7f3', '#ffffff']
+
+type SpeechRecognitionConstructor = new () => SpeechRecognition
+
+type SpeechRecognitionResultItem = {
+  transcript: string
+}
+
+type SpeechRecognitionResult = {
+  isFinal: boolean
+  [index: number]: SpeechRecognitionResultItem
+}
+
+type SpeechRecognitionResultList = {
+  length: number
+  [index: number]: SpeechRecognitionResult
+}
+
+type SpeechRecognitionEvent = Event & {
+  resultIndex: number
+  results: SpeechRecognitionResultList
+}
+
+type SpeechRecognitionErrorEvent = Event & {
+  error: string
+}
+
+type SpeechRecognition = EventTarget & {
+  lang: string
+  continuous: boolean
+  interimResults: boolean
+  onend: (() => void) | null
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null
+  onresult: ((event: SpeechRecognitionEvent) => void) | null
+  start: () => void
+  stop: () => void
+}
+
+declare global {
+  interface Window {
+    SpeechRecognition?: SpeechRecognitionConstructor
+    webkitSpeechRecognition?: SpeechRecognitionConstructor
+  }
+}
 
 const initialNotes: Note[] = [
   {
@@ -713,9 +760,13 @@ export function NotesWorkspace() {
   const [saveState, setSaveState] = useState<'ready' | 'saving' | 'saved'>('ready')
   const [fileStatus, setFileStatus] = useState('')
   const [formatToolbarOpen, setFormatToolbarOpen] = useState(true)
+  const [dictationState, setDictationState] = useState<DictationState>('unsupported')
+  const [dictationMessage, setDictationMessage] = useState('הכתבה קולית לא נתמכת בדפדפן הזה')
   const [offlineStatus, setOfflineStatus] = useState('מכין מצב אופליין...')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const editorRef = useRef<HTMLDivElement>(null)
+  const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const insertDictationTextRef = useRef<(text: string) => void>(() => {})
   const loadedEditorId = useRef<string | null>(null)
   const renderedSearchQuery = useRef('')
 
@@ -851,6 +902,164 @@ export function NotesWorkspace() {
     updateNote({ bodyHtml, body: htmlToPlainText(bodyHtml) })
   }
 
+  function selectionBelongsToEditor(selection: Selection) {
+    if (!editorRef.current || selection.rangeCount === 0) return false
+
+    const range = selection.getRangeAt(0)
+    const container = range.commonAncestorContainer
+    const element = container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement
+    return element ? editorRef.current.contains(element) : false
+  }
+
+  function insertNodeAtEditorCursor(node: Node) {
+    const editor = editorRef.current
+    if (!editor) return false
+
+    const selection = window.getSelection()
+    if (!selection || !selectionBelongsToEditor(selection)) {
+      editor.focus()
+      return false
+    }
+
+    const range = selection.getRangeAt(0)
+    range.deleteContents()
+    range.insertNode(node)
+    range.setStartAfter(node)
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+    editor.focus()
+    updateEditorContent()
+    return true
+  }
+
+  function insertTextAtEditorCursor(text: string) {
+    const node = document.createTextNode(text)
+    if (insertNodeAtEditorCursor(node)) return
+
+    editorRef.current?.focus()
+    document.execCommand('insertText', false, text)
+    updateEditorContent()
+  }
+
+  useEffect(() => {
+    insertDictationTextRef.current = insertTextAtEditorCursor
+  })
+
+  function applyExactFontSize(value: string) {
+    const editor = editorRef.current
+    if (!editor) return
+
+    const selection = window.getSelection()
+    editor.focus()
+
+    if (!selection || !selectionBelongsToEditor(selection)) {
+      document.execCommand('insertHTML', false, `<span style="font-size: ${value}">\u200b</span>`)
+      updateEditorContent()
+      return
+    }
+
+    const range = selection.getRangeAt(0)
+    const span = document.createElement('span')
+    span.style.fontSize = value
+
+    if (range.collapsed) {
+      const placeholder = document.createTextNode('\u200b')
+      span.appendChild(placeholder)
+      range.insertNode(span)
+      range.setStart(placeholder, placeholder.length)
+      range.collapse(true)
+    } else {
+      span.appendChild(range.extractContents())
+      range.insertNode(span)
+      range.setStartAfter(span)
+      range.collapse(true)
+    }
+
+    selection.removeAllRanges()
+    selection.addRange(range)
+    updateEditorContent()
+  }
+
+  function dictationErrorMessage(error: string) {
+    if (error === 'not-allowed' || error === 'service-not-allowed') return 'אין הרשאת מיקרופון'
+    if (error === 'no-speech') return 'לא זוהה דיבור'
+    if (error === 'audio-capture') return 'לא נמצא מיקרופון פעיל'
+    if (error === 'network') return 'ההכתבה דורשת חיבור זמין'
+    return 'ההכתבה הופסקה'
+  }
+
+  function toggleDictation() {
+    const recognition = recognitionRef.current
+    if (!recognition || dictationState === 'unsupported') return
+
+    if (dictationState === 'listening') {
+      recognition.stop()
+      setDictationState('idle')
+      setDictationMessage('התחלת הכתבה קולית')
+      return
+    }
+
+    try {
+      editorRef.current?.focus()
+      recognition.start()
+      setDictationState('listening')
+      setDictationMessage('מקליט בעברית...')
+    } catch {
+      setDictationState('error')
+      setDictationMessage('לא ניתן להתחיל הקלטה כרגע')
+    }
+  }
+
+  useEffect(() => {
+    const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition
+    if (!Recognition) return
+
+    const recognition = new Recognition()
+    recognition.lang = 'he-IL'
+    recognition.continuous = true
+    recognition.interimResults = true
+
+    recognition.onresult = (event) => {
+      let transcript = ''
+
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index]
+        if (result.isFinal) transcript += result[0]?.transcript ?? ''
+      }
+
+      const text = transcript.trim()
+      if (!text) return
+
+      insertDictationTextRef.current(`${text} `)
+    }
+
+    recognition.onerror = (event) => {
+      setDictationState('error')
+      setDictationMessage(dictationErrorMessage(event.error))
+    }
+
+    recognition.onend = () => {
+      setDictationState((current) => (current === 'unsupported' || current === 'error' ? current : 'idle'))
+    }
+
+    recognitionRef.current = recognition
+    const readyTimeout = window.setTimeout(() => {
+      setDictationState('idle')
+      setDictationMessage('התחלת הכתבה קולית')
+    }, 0)
+
+    return () => {
+      window.clearTimeout(readyTimeout)
+      try {
+        recognition.stop()
+      } catch {
+        // Some browsers throw when stop is called before recognition starts.
+      }
+      recognitionRef.current = null
+    }
+  }, [])
+
   function updateArticleNotes(articleNotes: ArticleNote[]) {
     updateNote({ articleNotes })
   }
@@ -908,6 +1117,11 @@ export function NotesWorkspace() {
   }
 
   function applyFontSize(value: string) {
+    if (value === '11pt') {
+      applyExactFontSize(value)
+      return
+    }
+
     editorRef.current?.focus()
     document.execCommand('fontSize', false, value)
     updateEditorContent()
@@ -936,9 +1150,7 @@ export function NotesWorkspace() {
     const text = event.clipboardData.getData('text/plain')
     if (!text) return
 
-    editorRef.current?.focus()
-    document.execCommand('insertText', false, text)
-    updateEditorContent()
+    insertTextAtEditorCursor(text)
   }
 
   function createNote() {
@@ -1484,6 +1696,31 @@ export function NotesWorkspace() {
                       </div>
 
                       <div className="flex items-center gap-1 border-l border-[#d8d8cf] pl-2">
+                        <button
+                          type="button"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={toggleDictation}
+                          disabled={dictationState === 'unsupported'}
+                          className={`grid h-9 w-9 place-items-center rounded-md border transition ${
+                            dictationState === 'listening'
+                              ? 'border-[#317d6e] bg-[#dff0e8] text-[#183c35]'
+                              : dictationState === 'error'
+                                ? 'border-[#e5c7c2] bg-white text-[#a34334]'
+                                : 'border-[#d8d8cf] bg-white text-[#4e5b55] hover:border-[#317d6e] hover:text-[#183c35]'
+                          } disabled:cursor-not-allowed disabled:opacity-45`}
+                          aria-label={dictationState === 'listening' ? 'עצירת הכתבה קולית' : 'התחלת הכתבה קולית'}
+                          title={dictationMessage}
+                        >
+                          {dictationState === 'listening' ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                        </button>
+                        {dictationState === 'listening' || dictationState === 'error' ? (
+                          <span className="max-w-28 truncate text-xs font-bold text-[#59665f]" title={dictationMessage}>
+                            {dictationMessage}
+                          </span>
+                        ) : null}
+                      </div>
+
+                      <div className="flex items-center gap-1 border-l border-[#d8d8cf] pl-2">
                         {textFormatActions.map((item) => {
                           const Icon = item.icon
                           return (
@@ -1660,7 +1897,7 @@ export function NotesWorkspace() {
                   onInput={updateEditorContent}
                   onBlur={updateEditorContent}
                   onPaste={handleEditorPaste}
-                  className="sikumit-editor min-h-[420px] flex-1 overflow-y-auto bg-[#fcfcf8] px-5 py-6 text-lg leading-9 text-[#24302a] outline-none empty:before:text-[#9ba49f] empty:before:content-['להתחיל_לכתוב...'] lg:px-8"
+                  className="sikumit-editor min-h-[420px] flex-1 overflow-y-auto bg-[#fcfcf8] px-5 py-5 text-base leading-7 text-[#24302a] outline-none empty:before:text-[#9ba49f] empty:before:content-['להתחיל_לכתוב...'] lg:px-8"
                 />
 
                 <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[#deded4] px-5 py-3 text-xs font-bold text-[#6a766f] lg:px-8">

@@ -194,9 +194,9 @@
 .sikumit-editor h1,
 .sikumit-editor h2,
 .sikumit-editor h3 {
-  margin: 1.15rem 0 0.45rem;
+  margin: 0.9rem 0 0.35rem;
   font-weight: 900;
-  line-height: 1.35;
+  line-height: 1.25;
   color: #17211b;
 }
 
@@ -213,13 +213,13 @@
 }
 
 .sikumit-editor p {
-  margin: 0.45rem 0;
+  margin: 0.25rem 0;
 }
 
 .sikumit-editor ul,
 .sikumit-editor ol {
-  margin: 0.75rem 0;
-  padding-right: 1.4rem;
+  margin: 0.45rem 0;
+  padding-right: 1.25rem;
 }
 
 .sikumit-editor ul {
@@ -231,15 +231,15 @@
 }
 
 .sikumit-editor li {
-  margin: 0.25rem 0;
+  margin: 0.15rem 0;
   padding-right: 0.2rem;
 }
 
 .sikumit-editor blockquote {
-  margin: 1rem 0;
+  margin: 0.7rem 0;
   border-right: 4px solid #317d6e;
   background: #eef5ef;
-  padding: 0.75rem 1rem;
+  padding: 0.55rem 0.85rem;
   color: #3d4b45;
 }
 
