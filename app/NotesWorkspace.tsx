@@ -1,6 +1,8 @@
 'use client'
 
-import { type ClipboardEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { type ClipboardEvent, type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import type { User } from '@supabase/supabase-js'
+import { supabase } from '../lib/supabase'
 import {
   AlignCenter,
   AlignLeft,
@@ -408,6 +410,23 @@ async function saveNotesToDb(notes: Note[]) {
   })
 }
 
+async function loadNotesFromSupabase(userId: string): Promise<Note[] | null> {
+  const { data, error } = await supabase
+    .from('workspaces')
+    .select('notes')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (error || !data) return null
+  return data.notes as Note[]
+}
+
+async function saveNotesToSupabase(userId: string, notes: Note[]): Promise<void> {
+  await supabase
+    .from('workspaces')
+    .upsert({ user_id: userId, notes, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+}
+
 function escapeXml(value: string) {
   return value
     .replaceAll('&', '&amp;')
@@ -748,6 +767,14 @@ function extractBlocksFromDocumentXml(xmlText: string) {
 }
 
 export function NotesWorkspace() {
+  const [user, setUser] = useState<User | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
+  const [authSubmitting, setAuthSubmitting] = useState(false)
+
   const [notes, setNotes] = useState<Note[]>(initialNotes)
   const [activeId, setActiveId] = useState(initialNotes[0].id)
   const [query, setQuery] = useState('')
@@ -771,10 +798,36 @@ export function NotesWorkspace() {
   const renderedSearchQuery = useRef('')
 
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null)
+      setAuthLoading(false)
+    }).catch(() => setAuthLoading(false))
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!user) return
+
     const loadNotes = async () => {
       try {
+        const cloudNotes = await loadNotesFromSupabase(user.id)
+
+        if (cloudNotes?.length) {
+          window.setTimeout(() => {
+            setNotes(cloudNotes)
+            setActiveId(cloudNotes[0].id)
+          }, 0)
+          return
+        }
+
         const indexedNotes = await loadNotesFromDb()
         if (indexedNotes?.length) {
+          await saveNotesToSupabase(user.id, indexedNotes)
           window.setTimeout(() => {
             setNotes(indexedNotes)
             setActiveId(indexedNotes[0].id)
@@ -787,6 +840,7 @@ export function NotesWorkspace() {
 
         const parsed = JSON.parse(saved) as Note[]
         if (Array.isArray(parsed) && parsed.length > 0) {
+          await saveNotesToSupabase(user.id, parsed)
           await saveNotesToDb(parsed)
           window.localStorage.removeItem(storageKey)
           window.setTimeout(() => {
@@ -800,20 +854,24 @@ export function NotesWorkspace() {
     }
 
     void loadNotes()
-  }, [])
+  }, [user])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      saveNotesToDb(notes)
-        .then(() => {
-          window.localStorage.removeItem(storageKey)
-          setSaveState('saved')
-        })
-        .catch(() => setSaveState('ready'))
+      void saveNotesToDb(notes).then(() => {
+        window.localStorage.removeItem(storageKey)
+      })
+
+      if (user) {
+        setSaveState('saving')
+        saveNotesToSupabase(user.id, notes)
+          .then(() => setSaveState('saved'))
+          .catch(() => setSaveState('ready'))
+      }
     }, 280)
 
     return () => window.clearTimeout(timeout)
-  }, [notes])
+  }, [notes, user])
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) {
@@ -884,6 +942,30 @@ export function NotesWorkspace() {
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       })
   }, [activeFilter, activeFolder, activeTag, notes, query])
+
+  async function handleAuthSubmit(event: FormEvent) {
+    event.preventDefault()
+    setAuthError('')
+    setAuthSubmitting(true)
+
+    try {
+      if (authMode === 'signup') {
+        const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword })
+        if (error) setAuthError(error.message)
+      } else {
+        const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword })
+        if (error) setAuthError(error.message)
+      }
+    } finally {
+      setAuthSubmitting(false)
+    }
+  }
+
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    setNotes(initialNotes)
+    setActiveId(initialNotes[0].id)
+  }
 
   function updateNote(patch: Partial<Note>) {
     if (!activeNote) return
@@ -1244,6 +1326,89 @@ export function NotesWorkspace() {
   const wordCount = activeNote?.body.split(/\s+/).filter(Boolean).length ?? 0
   const emptySearch = query.trim() && filteredNotes.length === 0
 
+  if (authLoading) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#f7f7f2] text-[#17211b]">
+        <p className="text-sm font-bold text-[#53625c]">טוען...</p>
+      </main>
+    )
+  }
+
+  if (!user) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#f7f7f2] px-4">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 text-center">
+            <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-xl bg-[#183c35] text-white">
+              <PenLine className="h-7 w-7" />
+            </div>
+            <h1 className="text-2xl font-black text-[#17211b]">סיכומית</h1>
+            <p className="mt-1 text-sm text-[#68756f]">מרחב כתיבה אישי</p>
+          </div>
+
+          <div className="rounded-xl border border-[#deded4] bg-white p-6 shadow-sm">
+            <div className="mb-5 flex rounded-lg border border-[#deded4] p-1">
+              <button
+                type="button"
+                onClick={() => setAuthMode('signin')}
+                className={`flex-1 rounded-md py-2 text-sm font-bold transition ${authMode === 'signin' ? 'bg-[#183c35] text-white' : 'text-[#53625c] hover:text-[#17211b]'}`}
+              >
+                כניסה
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuthMode('signup')}
+                className={`flex-1 rounded-md py-2 text-sm font-bold transition ${authMode === 'signup' ? 'bg-[#183c35] text-white' : 'text-[#53625c] hover:text-[#17211b]'}`}
+              >
+                הרשמה
+              </button>
+            </div>
+
+            <form onSubmit={(e) => { void handleAuthSubmit(e) }} className="space-y-4" dir="rtl">
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-[#27352f]">אימייל</span>
+                <input
+                  type="email"
+                  value={authEmail}
+                  onChange={(e) => setAuthEmail(e.target.value)}
+                  required
+                  autoComplete="email"
+                  className="h-11 w-full rounded-md border border-[#d8d8cf] bg-[#f7f7f2] px-3 text-sm outline-none transition focus:border-[#317d6e] focus:ring-2 focus:ring-[#317d6e]/15"
+                  placeholder="your@email.com"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-bold text-[#27352f]">סיסמה</span>
+                <input
+                  type="password"
+                  value={authPassword}
+                  onChange={(e) => setAuthPassword(e.target.value)}
+                  required
+                  autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                  minLength={6}
+                  className="h-11 w-full rounded-md border border-[#d8d8cf] bg-[#f7f7f2] px-3 text-sm outline-none transition focus:border-[#317d6e] focus:ring-2 focus:ring-[#317d6e]/15"
+                  placeholder="לפחות 6 תווים"
+                />
+              </label>
+              {authError ? (
+                <p className="rounded-md border border-[#e5c7c2] bg-[#fff0ed] px-3 py-2 text-sm font-bold text-[#a34334]">
+                  {authError}
+                </p>
+              ) : null}
+              <button
+                type="submit"
+                disabled={authSubmitting}
+                className="h-11 w-full rounded-md bg-[#183c35] text-sm font-bold text-white transition hover:bg-[#225246] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {authSubmitting ? 'אנא המתן...' : authMode === 'signup' ? 'הרשמה' : 'כניסה'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f7f2] text-[#17211b]">
       <div className="min-h-screen pr-16">
@@ -1520,12 +1685,23 @@ export function NotesWorkspace() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-sm font-bold text-[#53625c]">
-              <Save className="h-4 w-4 text-[#317d6e]" />
-              {saveState === 'saving' ? 'שומר...' : 'נשמר'}
-            </div>
-            <div className="hidden items-center rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-xs font-bold text-[#53625c] md:flex">
-              {offlineStatus}
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-sm font-bold text-[#53625c]">
+                <Save className="h-4 w-4 text-[#317d6e]" />
+                {saveState === 'saving' ? 'שומר בענן...' : 'נשמר בענן'}
+              </div>
+              <div className="hidden items-center rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-xs font-bold text-[#53625c] md:flex">
+                {offlineStatus}
+              </div>
+              <button
+                type="button"
+                onClick={() => { void handleSignOut() }}
+                className="hidden items-center gap-1.5 rounded-md border border-[#d8d8cf] bg-white px-3 py-2 text-xs font-bold text-[#53625c] transition hover:border-[#317d6e] hover:text-[#183c35] md:flex"
+                title={user.email ?? ''}
+              >
+                <span className="max-w-28 truncate">{user.email}</span>
+                <X className="h-3.5 w-3.5 shrink-0" />
+              </button>
             </div>
           </header>
 

@@ -1,6 +1,9 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Heebo } from 'next/font/google'
 import './globals.css'
+
+const appBasePath = '/sikumit'
+const appUrl = process.env.NEXT_PUBLIC_URL || 'https://yakov100.github.io/sikumit'
 
 const heebo = Heebo({
   subsets: ['hebrew', 'latin'],
@@ -12,9 +15,14 @@ const heebo = Heebo({
 export const metadata: Metadata = {
   title: { default: 'סיכומית', template: '%s | סיכומית' },
   description: 'מרחב כתיבה אישי ליצירה, שמירה, ארגון וחיפוש של פתקים וסיכומים בעברית.',
-  metadataBase: new URL(process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'),
-  manifest: '/sikumit/manifest.webmanifest',
+  metadataBase: new URL(appUrl),
+  manifest: `${appBasePath}/manifest.webmanifest`,
   applicationName: 'סיכומית',
+  category: 'productivity',
+  icons: {
+    icon: [{ url: `${appBasePath}/icon.svg`, type: 'image/svg+xml' }],
+    apple: [{ url: `${appBasePath}/icon.svg`, type: 'image/svg+xml' }],
+  },
   appleWebApp: {
     capable: true,
     title: 'סיכומית',
@@ -25,6 +33,11 @@ export const metadata: Metadata = {
     locale: 'he_IL',
     siteName: 'סיכומית',
   },
+}
+
+export const viewport: Viewport = {
+  themeColor: '#183c35',
+  colorScheme: 'light',
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
