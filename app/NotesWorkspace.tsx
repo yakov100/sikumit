@@ -410,15 +410,21 @@ async function saveNotesToDb(notes: Note[]) {
   })
 }
 
-async function loadNotesFromSupabase(userId: string): Promise<Note[] | null> {
+type WorkspaceRecord = { notes: Note[]; updatedAt: string }
+
+async function loadNotesFromSupabase(userId: string): Promise<WorkspaceRecord | null> {
   const { data, error } = await supabase
     .from('workspaces')
-    .select('notes')
+    .select('notes, updated_at')
     .eq('user_id', userId)
     .maybeSingle()
 
   if (error || !data) return null
-  return data.notes as Note[]
+  return { notes: data.notes as Note[], updatedAt: data.updated_at as string }
+}
+
+function maxUpdatedAt(notes: Note[]): number {
+  return notes.reduce((max, note) => Math.max(max, new Date(note.updatedAt).getTime()), 0)
 }
 
 async function saveNotesToSupabase(userId: string, notes: Note[]): Promise<void> {
@@ -796,6 +802,7 @@ export function NotesWorkspace() {
   const insertDictationTextRef = useRef<(text: string) => void>(() => {})
   const loadedEditorId = useRef<string | null>(null)
   const renderedSearchQuery = useRef('')
+  const notesRef = useRef<Note[]>(notes)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -815,13 +822,25 @@ export function NotesWorkspace() {
 
     const loadNotes = async () => {
       try {
-        const cloudNotes = await loadNotesFromSupabase(user.id)
+        const cloud = await loadNotesFromSupabase(user.id)
 
-        if (cloudNotes?.length) {
-          window.setTimeout(() => {
-            setNotes(cloudNotes)
-            setActiveId(cloudNotes[0].id)
-          }, 0)
+        if (cloud?.notes.length) {
+          const local = await loadNotesFromDb()
+          const localMax = local?.length ? maxUpdatedAt(local) : 0
+          const cloudMax = new Date(cloud.updatedAt).getTime()
+
+          if (localMax > cloudMax && local) {
+            await saveNotesToSupabase(user.id, local)
+            window.setTimeout(() => {
+              setNotes(local)
+              setActiveId(local[0].id)
+            }, 0)
+          } else {
+            window.setTimeout(() => {
+              setNotes(cloud.notes)
+              setActiveId(cloud.notes[0].id)
+            }, 0)
+          }
           return
         }
 
@@ -855,6 +874,10 @@ export function NotesWorkspace() {
 
     void loadNotes()
   }, [user])
+
+  useEffect(() => {
+    notesRef.current = notes
+  })
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -895,6 +918,44 @@ export function NotesWorkspace() {
 
     void registerOfflineMode()
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+
+    const handleOnline = () => {
+      setOfflineStatus('מסנכרן...')
+
+      const localNotes = notesRef.current
+      const localMax = localNotes.length ? maxUpdatedAt(localNotes) : 0
+
+      loadNotesFromSupabase(user.id)
+        .then(async (cloud) => {
+          if (!cloud) {
+            if (localNotes.length) await saveNotesToSupabase(user.id, localNotes)
+            setOfflineStatus('זמין אופליין אחרי ביקור ראשון')
+            return
+          }
+
+          const cloudMax = new Date(cloud.updatedAt).getTime()
+
+          if (localMax > cloudMax) {
+            setSaveState('saving')
+            await saveNotesToSupabase(user.id, localNotes)
+            setSaveState('saved')
+          } else if (cloudMax > localMax) {
+            setNotes(cloud.notes)
+            setActiveId((current) => cloud.notes.find((n) => n.id === current) ? current : cloud.notes[0].id)
+            await saveNotesToDb(cloud.notes)
+          }
+
+          setOfflineStatus('זמין אופליין אחרי ביקור ראשון')
+        })
+        .catch(() => setOfflineStatus('שגיאת סנכרון'))
+    }
+
+    window.addEventListener('online', handleOnline)
+    return () => window.removeEventListener('online', handleOnline)
+  }, [user])
 
   const activeNote = notes.find((note) => note.id === activeId) ?? notes[0]
   const activeArticleNotes = activeNote?.articleNotes ?? []
