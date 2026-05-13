@@ -2,8 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { Heebo } from 'next/font/google'
 import './globals.css'
 
-const appBasePath = '/sikumit'
-const appUrl = process.env.NEXT_PUBLIC_URL || 'https://yakov100.github.io/sikumit'
+const appUrl = process.env.NEXT_PUBLIC_URL || 'http://localhost:3000'
 
 const heebo = Heebo({
   subsets: ['hebrew', 'latin'],
@@ -16,12 +15,11 @@ export const metadata: Metadata = {
   title: { default: 'סיכומית', template: '%s | סיכומית' },
   description: 'מרחב כתיבה אישי ליצירה, שמירה, ארגון וחיפוש של פתקים וסיכומים בעברית.',
   metadataBase: new URL(appUrl),
-  manifest: `${appBasePath}/manifest.webmanifest`,
   applicationName: 'סיכומית',
   category: 'productivity',
   icons: {
-    icon: [{ url: `${appBasePath}/icon.svg`, type: 'image/svg+xml' }],
-    apple: [{ url: `${appBasePath}/icon.svg`, type: 'image/svg+xml' }],
+    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
+    apple: [{ url: '/icon.svg', type: 'image/svg+xml' }],
   },
   appleWebApp: {
     capable: true,

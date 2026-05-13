@@ -1,10 +1,8 @@
-const CACHE_NAME = 'sikumit-offline-v2';
-const BASE_PATH = new URL(self.registration.scope).pathname.replace(/\/$/, '');
-const appPath = (path) => `${BASE_PATH}${path}`;
+const CACHE_NAME = 'sikumit-offline-v3';
 const CORE_ASSETS = [
-  appPath('/'),
-  appPath('/manifest.webmanifest'),
-  appPath('/icon.svg'),
+  '/',
+  '/manifest.webmanifest',
+  '/icon.svg',
 ];
 
 self.addEventListener('install', (event) => {
@@ -30,17 +28,17 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-  if (url.origin !== self.location.origin || !url.pathname.startsWith(`${BASE_PATH}/`)) return;
+  if (url.origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(appPath('/'), copy));
+          caches.open(CACHE_NAME).then((cache) => cache.put('/', copy));
           return response;
         })
-        .catch(() => caches.match(appPath('/'))),
+        .catch(() => caches.match('/')),
     );
     return;
   }

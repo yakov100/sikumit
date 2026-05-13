@@ -2,13 +2,9 @@
 
 אפליקציית Next.js לכתיבה, שמירה, ארגון וחיפוש של פתקים וסיכומים בעברית.
 
-## האתר
+## פלטפורמה
 
-האתר זמין בכתובת:
-
-```text
-https://yakov100.github.io/sikumit/
-```
+האפליקציה רצה כ-Next.js 16 מלא (App Router). פריסה מומלצת: Vercel.
 
 ## יכולות
 
@@ -69,8 +65,8 @@ npm run lint
 npm run build
 ```
 
-## GitHub Pages
+## CI ופריסה
 
-כל push לענף `main` מריץ GitHub Actions שמבצע static export ומפרסם את תיקיית `out` ל-GitHub Pages.
+כל push ל-`main` ו-PR מריצים את workflow [`ci.yml`](.github/workflows/ci.yml) שמבצע lint, typecheck, test ו-build.
 
-> **שים לב:** משתני הסביבה חייבים להיות מוגדרים גם ב-GitHub Secrets/Variables על מנת שהבנייה ב-Actions תכיר אותם.
+לפריסה ל-Vercel: לחבר את הרפו דרך Vercel Dashboard ולהגדיר את משתני הסביבה (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`).
