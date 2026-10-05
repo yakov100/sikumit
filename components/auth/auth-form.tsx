@@ -38,9 +38,11 @@ export function AuthForm() {
         </div>
 
         <div className="rounded-xl border border-[#deded4] bg-white p-6 shadow-sm">
-          <div className="mb-5 flex rounded-lg border border-[#deded4] p-1">
+          <div role="tablist" aria-label="מצב התחברות" className="mb-5 flex rounded-lg border border-[#deded4] p-1">
             <button
               type="button"
+              role="tab"
+              aria-selected={mode === 'signin'}
               onClick={() => setMode('signin')}
               className={`flex-1 rounded-md py-2 text-sm font-bold transition ${
                 mode === 'signin' ? 'bg-[#183c35] text-white' : 'text-[#53625c] hover:text-[#17211b]'
@@ -50,6 +52,8 @@ export function AuthForm() {
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={mode === 'signup'}
               onClick={() => setMode('signup')}
               className={`flex-1 rounded-md py-2 text-sm font-bold transition ${
                 mode === 'signup' ? 'bg-[#183c35] text-white' : 'text-[#53625c] hover:text-[#17211b]'
